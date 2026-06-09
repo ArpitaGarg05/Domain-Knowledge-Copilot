@@ -20,6 +20,7 @@ from app.schemas.history import HistoryResponse
 from app.services.chunk_service import ChunkService
 from app.services.embedding_service import EmbeddingService
 from app.services.pdf_processor import extract_pdf_text
+from app.services.vector_store_service import VectorStoreService
 
 router = APIRouter()
 
@@ -54,6 +55,7 @@ def create_corpus(
     db: Session = Depends(get_db),
 ) -> CorpusResponse:
     corpus = corpus_crud.create_corpus(db, request)
+    VectorStoreService().get_or_create_collection(corpus.id)
     return build_corpus_response(corpus)
 
 
@@ -69,6 +71,7 @@ def delete_corpus(
             detail="Corpus not found.",
         )
 
+    VectorStoreService().delete_collection(corpus_id)
     return CorpusDeleteResponse(id=corpus_id, deleted=True)
 
 
@@ -132,6 +135,7 @@ def upload_document(
         chunks=chunks,
         embeddings=embeddings,
     )
+    VectorStoreService().add_document_chunks(corpus_id=corpus_id, document=document)
     return DocumentResponse.model_validate(document)
 
 

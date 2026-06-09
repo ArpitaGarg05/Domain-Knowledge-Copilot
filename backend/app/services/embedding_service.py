@@ -31,7 +31,13 @@ class EmbeddingService:
     @property
     def model(self) -> SentenceTransformer:
         if self._model is None:
-            self._model = SentenceTransformer(self.model_name)
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    local_files_only=True,
+                )
+            except Exception:
+                self._model = SentenceTransformer(self.model_name)
         return self._model
 
     def embed_chunks(self, chunks: list[TextChunk]) -> list[EmbeddedChunk]:
