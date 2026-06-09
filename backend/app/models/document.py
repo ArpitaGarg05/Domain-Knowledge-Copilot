@@ -12,8 +12,10 @@ class Document(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     corpus_id: Mapped[int] = mapped_column(ForeignKey("corpora.id"), index=True)
     title: Mapped[str] = mapped_column(String(255))
+    filename: Mapped[str] = mapped_column(String(255))
     source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     content_preview: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     corpus = relationship("Corpus", back_populates="documents")

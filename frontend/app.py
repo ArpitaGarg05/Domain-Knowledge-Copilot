@@ -57,6 +57,23 @@ def delete_corpus(corpus_id: int) -> dict[str, object]:
     return response.json()
 
 
+def upload_pdf(corpus_id: int, uploaded_file: object) -> dict[str, object]:
+    files = {
+        "file": (
+            uploaded_file.name,
+            uploaded_file.getvalue(),
+            "application/pdf",
+        )
+    }
+    response = requests.post(
+        api_url(f"/corpora/{corpus_id}/upload"),
+        files=files,
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def load_backend_data() -> tuple[list[dict[str, object]], list[str]]:
     with st.spinner("Loading backend data..."):
         return fetch_corpora(), fetch_history()
@@ -130,6 +147,10 @@ def render_dashboard(corpora: list[dict[str, object]], history: list[str]) -> No
     st.title("Dashboard")
     st.caption("Backend-connected overview using SQLite-backed corpus data.")
 
+    upload_message = st.session_state.pop("upload_message", None)
+    if upload_message:
+        st.success(upload_message)
+
     summary_cols = st.columns(3)
     summary_cols[0].metric("Corpora", len(corpora))
     summary_cols[1].metric(
@@ -144,8 +165,29 @@ def render_dashboard(corpora: list[dict[str, object]], history: list[str]) -> No
     with heading_col:
         st.header("Corpus List")
     with action_col:
-        st.button("Upload Documents", use_container_width=True, disabled=True)
-        st.caption("Placeholder only")
+        if selected_corpus:
+            uploaded_pdf = st.file_uploader(
+                "Upload PDF",
+                type=["pdf"],
+                accept_multiple_files=False,
+            )
+            if st.button(
+                "Upload",
+                use_container_width=True,
+                disabled=uploaded_pdf is None,
+            ):
+                try:
+                    with st.spinner("Uploading PDF..."):
+                        document = upload_pdf(int(selected_corpus["id"]), uploaded_pdf)
+                    st.session_state.upload_message = (
+                        f"Uploaded {document['filename']} to {selected_corpus['name']}."
+                    )
+                    st.rerun()
+                except requests.RequestException as error:
+                    render_api_error(error)
+        else:
+            st.button("Upload", use_container_width=True, disabled=True)
+            st.caption("Create a corpus first")
 
     if corpora:
         for corpus in corpora:

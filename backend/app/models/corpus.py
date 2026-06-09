@@ -21,5 +21,13 @@ class Corpus(Base):
     )
 
     owner = relationship("User", back_populates="corpora")
-    documents = relationship("Document", back_populates="corpus")
-    chat_messages = relationship("ChatMessage", back_populates="corpus")
+    documents = relationship(
+        "Document",
+        back_populates="corpus",
+        cascade="all, delete-orphan",
+    )
+    chat_messages = relationship(
+        "ChatMessage",
+        back_populates="corpus",
+        cascade="all, delete-orphan",
+    )
