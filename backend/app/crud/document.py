@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session
 
-from app.models.document import Document, DocumentChunk, DocumentPage
+from app.models.document import ChunkEmbedding, Document, DocumentChunk, DocumentPage
 from app.services.chunk_service import TextChunk
+from app.services.embedding_service import EmbeddedChunk
 from app.services.pdf_processor import ExtractedPdfPage
 
 
@@ -12,8 +13,12 @@ def create_document(
     source_path: str,
     pages: list[ExtractedPdfPage],
     chunks: list[TextChunk],
+    embeddings: list[EmbeddedChunk],
 ) -> Document:
     extracted_text = "\n".join(page.text for page in pages).strip()
+    embeddings_by_index = {
+        embedding.chunk_index: embedding for embedding in embeddings
+    }
     document = Document(
         corpus_id=corpus_id,
         title=filename,
@@ -30,6 +35,17 @@ def create_document(
                 page_number=chunk.page_number,
                 chunk_index=chunk.chunk_index,
                 text=chunk.text,
+                embedding=(
+                    ChunkEmbedding(
+                        model_name=embeddings_by_index[chunk.chunk_index].model_name,
+                        vector_dimension=embeddings_by_index[
+                            chunk.chunk_index
+                        ].vector_dimension,
+                        vector=embeddings_by_index[chunk.chunk_index].vector_json,
+                    )
+                    if chunk.chunk_index in embeddings_by_index
+                    else None
+                ),
             )
             for chunk in chunks
         ],

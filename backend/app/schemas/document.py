@@ -13,6 +13,7 @@ class DocumentResponse(BaseModel):
     uploaded_at: datetime
     page_count: int
     chunk_count: int
+    embedding_count: int
 
 
 class DocumentPageResponse(BaseModel):

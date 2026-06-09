@@ -37,6 +37,10 @@ class Document(Base):
     def chunk_count(self) -> int:
         return len(self.chunks)
 
+    @property
+    def embedding_count(self) -> int:
+        return sum(1 for chunk in self.chunks if chunk.embedding is not None)
+
 
 class DocumentPage(Base):
     __tablename__ = "document_pages"
@@ -59,3 +63,22 @@ class DocumentChunk(Base):
     text: Mapped[str] = mapped_column(Text, default="")
 
     document = relationship("Document", back_populates="chunks")
+    embedding = relationship(
+        "ChunkEmbedding",
+        back_populates="chunk",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class ChunkEmbedding(Base):
+    __tablename__ = "chunk_embeddings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("document_chunks.id"), index=True)
+    model_name: Mapped[str] = mapped_column(String(255), index=True)
+    vector_dimension: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    chunk = relationship("DocumentChunk", back_populates="embedding")

@@ -4,3 +4,4 @@ sqlalchemy
 alembic
 python-multipart
 pypdf
+sentence-transformers
