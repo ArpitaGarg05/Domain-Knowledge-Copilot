@@ -10,7 +10,7 @@ def get_corpus(db: Session, corpus_id: int) -> Corpus | None:
 
 
 def list_corpora(db: Session, skip: int = 0, limit: int = 100) -> list[Corpus]:
-    statement = select(Corpus).offset(skip).limit(limit)
+    statement = select(Corpus).order_by(Corpus.id).offset(skip).limit(limit)
     return list(db.scalars(statement))
 
 
