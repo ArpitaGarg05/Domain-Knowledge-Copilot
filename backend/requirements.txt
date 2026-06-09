@@ -3,3 +3,4 @@ uvicorn
 sqlalchemy
 alembic
 python-multipart
+pypdf

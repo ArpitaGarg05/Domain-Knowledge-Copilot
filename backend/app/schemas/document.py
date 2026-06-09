@@ -11,3 +11,11 @@ class DocumentResponse(BaseModel):
     filename: str
     source_path: str
     uploaded_at: datetime
+    page_count: int
+
+
+class DocumentPageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    page_number: int
+    text: str

@@ -180,7 +180,8 @@ def render_dashboard(corpora: list[dict[str, object]], history: list[str]) -> No
                     with st.spinner("Uploading PDF..."):
                         document = upload_pdf(int(selected_corpus["id"]), uploaded_pdf)
                     st.session_state.upload_message = (
-                        f"Uploaded {document['filename']} to {selected_corpus['name']}."
+                        f"Uploaded {document['filename']} to {selected_corpus['name']} "
+                        f"and extracted {document['page_count']} page(s)."
                     )
                     st.rerun()
                 except requests.RequestException as error:

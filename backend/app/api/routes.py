@@ -17,6 +17,7 @@ from app.schemas.corpus import (
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
 from app.schemas.history import HistoryResponse
+from app.services.pdf_processor import extract_pdf_text
 
 router = APIRouter()
 
@@ -108,11 +109,21 @@ def upload_document(
     with destination.open("wb") as output_file:
         output_file.write(file.file.read())
 
+    try:
+        extracted_pages = extract_pdf_text(destination)
+    except Exception as error:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from the uploaded PDF.",
+        ) from error
+
     document = document_crud.create_document(
         db=db,
         corpus_id=corpus_id,
         filename=original_filename,
         source_path=str(destination),
+        pages=extracted_pages,
     )
     return DocumentResponse.model_validate(document)
 
