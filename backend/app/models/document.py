@@ -26,6 +26,16 @@ class Document(Base):
         cascade="all, delete-orphan",
         order_by="DocumentPage.page_number",
     )
+    chunks = relationship(
+        "DocumentChunk",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentChunk.chunk_index",
+    )
+
+    @property
+    def chunk_count(self) -> int:
+        return len(self.chunks)
 
 
 class DocumentPage(Base):
@@ -37,3 +47,15 @@ class DocumentPage(Base):
     text: Mapped[str] = mapped_column(Text, default="")
 
     document = relationship("Document", back_populates="pages")
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), index=True)
+    page_number: Mapped[int] = mapped_column(Integer, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text, default="")
+
+    document = relationship("Document", back_populates="chunks")

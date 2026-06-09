@@ -17,6 +17,7 @@ from app.schemas.corpus import (
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
 from app.schemas.history import HistoryResponse
+from app.services.chunk_service import ChunkService
 from app.services.pdf_processor import extract_pdf_text
 
 router = APIRouter()
@@ -118,12 +119,15 @@ def upload_document(
             detail="Could not extract text from the uploaded PDF.",
         ) from error
 
+    chunks = ChunkService().chunk_pages(extracted_pages)
+
     document = document_crud.create_document(
         db=db,
         corpus_id=corpus_id,
         filename=original_filename,
         source_path=str(destination),
         pages=extracted_pages,
+        chunks=chunks,
     )
     return DocumentResponse.model_validate(document)
 
