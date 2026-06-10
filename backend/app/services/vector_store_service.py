@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from typing import Optional, Union
 
 import chromadb
 from chromadb.api.models.Collection import Collection
@@ -20,7 +21,7 @@ class RetrievalResult:
     chunk_index: int
     chunk_reference: str
     text: str
-    distance: float | None
+    distance: Optional[float]
 
 
 class VectorStoreService:
@@ -48,7 +49,7 @@ class VectorStoreService:
         ids: list[str] = []
         embeddings: list[list[float]] = []
         documents: list[str] = []
-        metadatas: list[dict[str, int | str]] = []
+        metadatas: list[dict[str, Union[int, str]]] = []
 
         for chunk in document.chunks:
             if chunk.embedding is None:

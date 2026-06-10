@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,7 +14,7 @@ class Document(Base):
     corpus_id: Mapped[int] = mapped_column(ForeignKey("corpora.id"), index=True)
     title: Mapped[str] = mapped_column(String(255))
     filename: Mapped[str] = mapped_column(String(255))
-    source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     content_preview: Mapped[str] = mapped_column(Text, default="")
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -16,7 +19,7 @@ class RetrievedChunkResponse(BaseModel):
     chunk_index: int
     chunk_reference: str
     text: str
-    distance: float | None
+    distance: Optional[float]
 
 
 class AnswerRequest(SearchRequest):
@@ -26,3 +29,4 @@ class AnswerRequest(SearchRequest):
 class AnswerResponse(BaseModel):
     answer: str
     sources: list[RetrievedChunkResponse]
+    created_at: Optional[datetime] = None

@@ -1,9 +1,11 @@
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.crud import chat_message as chat_message_crud
 from app.crud import corpus as corpus_crud
 from app.crud import document as document_crud
 from app.core.config import settings
@@ -16,7 +18,8 @@ from app.schemas.corpus import (
 )
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
-from app.schemas.history import HistoryResponse
+from app.models.chat_message import ChatMessage
+from app.schemas.history import ChatMessageResponse, HistoryResponse
 from app.schemas.search import (
     AnswerRequest,
     AnswerResponse,
@@ -187,6 +190,20 @@ def build_retrieved_chunk_response(result) -> RetrievedChunkResponse:
     )
 
 
+def build_chat_message_response(message: ChatMessage) -> ChatMessageResponse:
+    return ChatMessageResponse(
+        id=message.id,
+        corpus_id=message.corpus_id,
+        role=message.role,
+        content=message.content,
+        citations=[
+            RetrievedChunkResponse(**citation)
+            for citation in chat_message_crud.parse_citations(message)
+        ],
+        created_at=message.created_at,
+    )
+
+
 @router.post("/answer", response_model=AnswerResponse)
 def answer_question(
     request: AnswerRequest,
@@ -205,11 +222,17 @@ def answer_question(
         limit=request.limit,
     )
     sources = [build_retrieved_chunk_response(result) for result in retrieved_chunks]
+    recent_messages = chat_message_crud.list_chat_messages(
+        db,
+        corpus_id=request.corpus_id,
+        limit=5,
+    )
 
     try:
         generated = LLMService().generate_answer(
             question=request.question,
             chunks=retrieved_chunks,
+            history=recent_messages,
         )
     except LLMConfigurationError as error:
         raise HTTPException(
@@ -222,15 +245,36 @@ def answer_question(
             detail=str(error),
         ) from error
 
-    return AnswerResponse(answer=generated.answer, sources=sources)
+    _, answer_message = chat_message_crud.create_chat_turn(
+        db=db,
+        corpus_id=request.corpus_id,
+        question=request.question,
+        answer=generated.answer,
+        citations=sources,
+    )
+
+    return AnswerResponse(
+        answer=generated.answer,
+        sources=sources,
+        created_at=answer_message.created_at,
+    )
 
 
 @router.get("/history", response_model=HistoryResponse)
-def get_history() -> HistoryResponse:
+def get_history(
+    corpus_id: Optional[int] = Query(default=None),
+    limit: int = Query(default=5, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> HistoryResponse:
+    messages = chat_message_crud.list_chat_messages(
+        db,
+        corpus_id=corpus_id,
+        limit=limit,
+    )
     return HistoryResponse(
         items=[
-            "Opened Product Docs corpus",
-            "Asked a mock question",
-            "Viewed corpus settings",
-        ]
+            f"{message.role.title()}: {message.content[:80]}"
+            for message in messages
+        ],
+        messages=[build_chat_message_response(message) for message in messages],
     )

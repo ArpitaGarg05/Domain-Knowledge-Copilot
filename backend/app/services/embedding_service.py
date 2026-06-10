@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from typing import Optional
 
 from sentence_transformers import SentenceTransformer
 
@@ -26,7 +27,7 @@ class EmbeddedChunk:
 class EmbeddingService:
     def __init__(self, model_name: str = EMBEDDING_MODEL_NAME) -> None:
         self.model_name = model_name
-        self._model: SentenceTransformer | None = None
+        self._model: Optional[SentenceTransformer] = None
 
     @property
     def model(self) -> SentenceTransformer:

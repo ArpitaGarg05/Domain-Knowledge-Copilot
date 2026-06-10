@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Union
 
 from pypdf import PdfReader
 
@@ -10,7 +11,7 @@ class ExtractedPdfPage:
     text: str
 
 
-def extract_pdf_text(pdf_path: str | Path) -> list[ExtractedPdfPage]:
+def extract_pdf_text(pdf_path: Union[str, Path]) -> list[ExtractedPdfPage]:
     reader = PdfReader(str(pdf_path))
     extracted_pages: list[ExtractedPdfPage] = []
 

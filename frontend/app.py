@@ -25,6 +25,16 @@ def fetch_history() -> list[str]:
     return response.json()["items"]
 
 
+def fetch_chat_history(corpus_id: int, limit: int = 20) -> list[dict[str, object]]:
+    response = requests.get(
+        api_url("/history"),
+        params={"corpus_id": corpus_id, "limit": limit},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return response.json()["messages"]
+
+
 def create_corpus(name: str, description: str) -> dict[str, object]:
     response = requests.post(
         api_url("/corpora"),
@@ -214,46 +224,38 @@ def render_chat(corpora: list[dict[str, object]]) -> None:
         st.write(str(selected_corpus["description"]))
         st.caption(f"Documents: {selected_corpus['document_count']}")
 
-    message_key = f"chat_messages_{selected_corpus['id']}"
-    if message_key not in st.session_state:
-        st.session_state[message_key] = [
+    try:
+        with st.spinner("Loading chat history..."):
+            messages = fetch_chat_history(int(selected_corpus["id"]))
+    except requests.RequestException as error:
+        render_api_error(error)
+        messages = []
+
+    if not messages:
+        messages = [
             {
                 "role": "assistant",
                 "content": "Ask a question about the selected corpus.",
-                "sources": [],
+                "citations": [],
+                "created_at": None,
             }
         ]
 
-    for message in st.session_state[message_key]:
+    for message in messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
-            if message["role"] == "assistant" and message.get("sources"):
-                render_citations(message["sources"])
+            if message.get("created_at"):
+                st.caption(f"Sent: {message['created_at']}")
+            if message["role"] == "assistant" and message.get("citations"):
+                render_citations(message["citations"])
 
     question = st.chat_input("Ask a question about this corpus")
     if question:
-        st.session_state[message_key].append(
-            {"role": "user", "content": question, "sources": []}
-        )
         try:
             with st.spinner("Retrieving sources and generating answer..."):
-                response = answer_question(int(selected_corpus["id"]), question)
-            st.session_state[message_key].append(
-                {
-                    "role": "assistant",
-                    "content": response["answer"],
-                    "sources": response["sources"],
-                }
-            )
+                answer_question(int(selected_corpus["id"]), question)
             st.rerun()
         except requests.RequestException as error:
-            st.session_state[message_key].append(
-                {
-                    "role": "assistant",
-                    "content": "I could not generate an answer.",
-                    "sources": [],
-                }
-            )
             render_api_error(error)
 
 

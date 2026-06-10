@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -5,7 +7,7 @@ from app.models.corpus import Corpus
 from app.schemas.corpus import CorpusCreateRequest
 
 
-def get_corpus(db: Session, corpus_id: int) -> Corpus | None:
+def get_corpus(db: Session, corpus_id: int) -> Optional[Corpus]:
     return db.get(Corpus, corpus_id)
 
 

@@ -1,8 +1,10 @@
 from dataclasses import dataclass
+from typing import Optional
 
 from groq import Groq, GroqError
 
 from app.core.config import settings
+from app.models.chat_message import ChatMessage
 from app.services.vector_store_service import RetrievalResult
 
 
@@ -22,7 +24,7 @@ class GeneratedAnswer:
 class LLMService:
     def __init__(
         self,
-        api_key: str | None = settings.groq_api_key,
+        api_key: Optional[str] = settings.groq_api_key,
         model: str = settings.groq_model,
     ) -> None:
         self.api_key = api_key
@@ -32,11 +34,12 @@ class LLMService:
         self,
         question: str,
         chunks: list[RetrievalResult],
+        history: Optional[list[ChatMessage]] = None,
     ) -> GeneratedAnswer:
         if not self.api_key:
             raise LLMConfigurationError("GROQ_API_KEY is not configured.")
 
-        prompt = self.build_prompt(question=question, chunks=chunks)
+        prompt = self.build_prompt(question=question, chunks=chunks, history=history or [])
         client = Groq(api_key=self.api_key)
 
         try:
@@ -62,7 +65,16 @@ class LLMService:
         answer = response.choices[0].message.content or ""
         return GeneratedAnswer(answer=answer.strip())
 
-    def build_prompt(self, question: str, chunks: list[RetrievalResult]) -> str:
+    def build_prompt(
+        self,
+        question: str,
+        chunks: list[RetrievalResult],
+        history: list[ChatMessage],
+    ) -> str:
+        conversation_history = "\n".join(
+            f"{message.role}: {message.content}"
+            for message in history
+        )
         sources = "\n\n".join(
             (
                 f"Source {index} "
@@ -73,6 +85,8 @@ class LLMService:
         )
 
         return (
+            "Recent conversation:\n"
+            f"{conversation_history if conversation_history else 'No prior messages.'}\n\n"
             "Question:\n"
             f"{question}\n\n"
             "Retrieved sources:\n"
