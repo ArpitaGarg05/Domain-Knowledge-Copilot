@@ -9,18 +9,88 @@ st.set_page_config(
 
 API_BASE_URL = "http://localhost:8000"
 
+
 def api_url(path: str) -> str:
     return f"{API_BASE_URL}{path}"
 
 
+def auth_headers() -> dict[str, str]:
+    token = st.session_state.get("access_token")
+    if not token:
+        return {}
+
+    return {"Authorization": f"Bearer {token}"}
+
+
+def register_user(email: str, display_name: str, password: str) -> dict[str, object]:
+    response = requests.post(
+        api_url("/auth/register"),
+        json={
+            "email": email,
+            "display_name": display_name,
+            "password": password,
+        },
+        timeout=5,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def login_user(email: str, password: str) -> dict[str, object]:
+    response = requests.post(
+        api_url("/auth/login"),
+        json={"email": email, "password": password},
+        timeout=5,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def store_auth_session(auth_response: dict[str, object]) -> None:
+    st.session_state.access_token = auth_response["access_token"]
+    st.session_state.current_user = auth_response["user"]
+
+
+def clear_auth_session() -> None:
+    for key in (
+        "access_token",
+        "current_user",
+        "selected_corpus_id",
+        "pending_selected_corpus_id",
+    ):
+        st.session_state.pop(key, None)
+
+
+def queue_selected_corpus(corpus_id: object) -> None:
+    st.session_state.pending_selected_corpus_id = corpus_id
+
+
+def apply_pending_selected_corpus(corpora: list[dict[str, object]]) -> None:
+    if "pending_selected_corpus_id" in st.session_state:
+        pending_id = st.session_state.pop("pending_selected_corpus_id")
+        if any(str(corpus["id"]) == str(pending_id) for corpus in corpora):
+            st.session_state.selected_corpus_id = pending_id
+        else:
+            st.session_state.pop("selected_corpus_id", None)
+
+    if corpora and (
+        "selected_corpus_id" not in st.session_state
+        or not any(
+            str(corpus["id"]) == str(st.session_state.selected_corpus_id)
+            for corpus in corpora
+        )
+    ):
+        st.session_state.selected_corpus_id = corpora[0]["id"]
+
+
 def fetch_corpora() -> list[dict[str, object]]:
-    response = requests.get(api_url("/corpora"), timeout=5)
+    response = requests.get(api_url("/corpora"), headers=auth_headers(), timeout=5)
     response.raise_for_status()
     return response.json()
 
 
 def fetch_history() -> list[str]:
-    response = requests.get(api_url("/history"), timeout=5)
+    response = requests.get(api_url("/history"), headers=auth_headers(), timeout=5)
     response.raise_for_status()
     return response.json()["items"]
 
@@ -29,6 +99,7 @@ def fetch_chat_history(corpus_id: int, limit: int = 20) -> list[dict[str, object
     response = requests.get(
         api_url("/history"),
         params={"corpus_id": corpus_id, "limit": limit},
+        headers=auth_headers(),
         timeout=5,
     )
     response.raise_for_status()
@@ -39,6 +110,7 @@ def create_corpus(name: str, description: str) -> dict[str, object]:
     response = requests.post(
         api_url("/corpora"),
         json={"name": name, "description": description},
+        headers=auth_headers(),
         timeout=5,
     )
     response.raise_for_status()
@@ -46,7 +118,11 @@ def create_corpus(name: str, description: str) -> dict[str, object]:
 
 
 def delete_corpus(corpus_id: int) -> dict[str, object]:
-    response = requests.delete(api_url(f"/corpora/{corpus_id}"), timeout=5)
+    response = requests.delete(
+        api_url(f"/corpora/{corpus_id}"),
+        headers=auth_headers(),
+        timeout=5,
+    )
     response.raise_for_status()
     return response.json()
 
@@ -62,6 +138,7 @@ def upload_pdf(corpus_id: int, uploaded_file: object) -> dict[str, object]:
     response = requests.post(
         api_url(f"/corpora/{corpus_id}/upload"),
         files=files,
+        headers=auth_headers(),
         timeout=15,
     )
     response.raise_for_status()
@@ -72,6 +149,7 @@ def answer_question(corpus_id: int, question: str) -> dict[str, object]:
     response = requests.post(
         api_url("/answer"),
         json={"corpus_id": corpus_id, "question": question, "limit": 5},
+        headers=auth_headers(),
         timeout=60,
     )
     response.raise_for_status()
@@ -97,6 +175,52 @@ def render_api_error(error: requests.RequestException) -> None:
         st.caption(str(error))
 
 
+def render_auth_page() -> None:
+    st.title("Domain Knowledge Copilot")
+    st.caption("Sign in to manage your corpora and chat history.")
+
+    login_tab, register_tab = st.tabs(["Login", "Register"])
+
+    with login_tab:
+        with st.form("login-form"):
+            email = st.text_input("Email", key="login_email")
+            password = st.text_input("Password", type="password", key="login_password")
+            submitted = st.form_submit_button("Login", use_container_width=True)
+
+        if submitted:
+            try:
+                with st.spinner("Signing in..."):
+                    auth_response = login_user(email.strip(), password)
+                store_auth_session(auth_response)
+                st.rerun()
+            except requests.RequestException as error:
+                render_api_error(error)
+
+    with register_tab:
+        with st.form("register-form"):
+            display_name = st.text_input("Display name")
+            email = st.text_input("Email", key="register_email")
+            password = st.text_input(
+                "Password",
+                type="password",
+                key="register_password",
+            )
+            submitted = st.form_submit_button("Create Account", use_container_width=True)
+
+        if submitted:
+            try:
+                with st.spinner("Creating account..."):
+                    auth_response = register_user(
+                        email=email.strip(),
+                        display_name=display_name.strip(),
+                        password=password,
+                    )
+                store_auth_session(auth_response)
+                st.rerun()
+            except requests.RequestException as error:
+                render_api_error(error)
+
+
 def get_selected_corpus(corpora: list[dict[str, object]]) -> dict[str, object]:
     if not corpora:
         return {}
@@ -112,6 +236,14 @@ def get_selected_corpus(corpora: list[dict[str, object]]) -> dict[str, object]:
 def render_sidebar(corpora: list[dict[str, object]]) -> str:
     st.sidebar.title("Domain Knowledge Copilot")
     st.sidebar.caption(f"API: {API_BASE_URL}")
+    current_user = st.session_state.get("current_user", {})
+    if current_user:
+        st.sidebar.caption(f"Signed in as {current_user.get('email')}")
+        if st.sidebar.button("Logout", use_container_width=True):
+            clear_auth_session()
+            st.rerun()
+
+    st.sidebar.divider()
 
     if corpora:
         st.sidebar.selectbox(
@@ -326,7 +458,7 @@ def render_settings(corpora: list[dict[str, object]]) -> None:
                 try:
                     with st.spinner("Creating corpus..."):
                         created = create_corpus(name.strip(), description.strip())
-                    st.session_state.selected_corpus_id = created["id"]
+                    queue_selected_corpus(created["id"])
                     st.success(f"Created corpus: {created['name']}")
                     st.json(created)
                     st.rerun()
@@ -345,9 +477,9 @@ def render_settings(corpora: list[dict[str, object]]) -> None:
                         corpus for corpus in corpora if corpus["id"] != selected_corpus["id"]
                     ]
                     if remaining:
-                        st.session_state.selected_corpus_id = remaining[0]["id"]
+                        queue_selected_corpus(remaining[0]["id"])
                     else:
-                        st.session_state.pop("selected_corpus_id", None)
+                        queue_selected_corpus(None)
                     st.success(f"Deleted corpus: {selected_corpus['name']}")
                     st.rerun()
                 except requests.RequestException as error:
@@ -358,18 +490,24 @@ def render_settings(corpora: list[dict[str, object]]) -> None:
     st.info("Settings controls are placeholders. Corpus create/delete calls the backend.")
 
 
+if "access_token" not in st.session_state:
+    render_auth_page()
+    st.stop()
+
 try:
     corpora, history = load_backend_data()
 except requests.RequestException as error:
     st.title("Domain Knowledge Copilot")
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        if error.response.status_code == 401:
+            clear_auth_session()
+            st.warning("Your session expired. Please sign in again.")
+            render_auth_page()
+            st.stop()
     render_api_error(error)
     st.stop()
 
-if corpora and (
-    "selected_corpus_id" not in st.session_state
-    or not any(str(corpus["id"]) == str(st.session_state.selected_corpus_id) for corpus in corpora)
-):
-    st.session_state.selected_corpus_id = corpora[0]["id"]
+apply_pending_selected_corpus(corpora)
 
 page = render_sidebar(corpora)
 
