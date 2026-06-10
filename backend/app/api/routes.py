@@ -5,12 +5,23 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.crud import chat_message as chat_message_crud
 from app.crud import corpus as corpus_crud
 from app.crud import document as document_crud
+from app.crud import user as user_crud
 from app.core.config import settings
+from app.core.security import create_access_token, verify_password
 from app.db.session import get_db
+from app.models.chat_message import ChatMessage
 from app.models.corpus import Corpus
+from app.models.user import User
+from app.schemas.auth import (
+    TokenResponse,
+    UserLoginRequest,
+    UserRegisterRequest,
+    UserResponse,
+)
 from app.schemas.corpus import (
     CorpusCreateRequest,
     CorpusDeleteResponse,
@@ -18,7 +29,6 @@ from app.schemas.corpus import (
 )
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
-from app.models.chat_message import ChatMessage
 from app.schemas.history import ChatMessageResponse, HistoryResponse
 from app.schemas.search import (
     AnswerRequest,
@@ -44,6 +54,49 @@ def health_check() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+def build_token_response(user: User) -> TokenResponse:
+    return TokenResponse(
+        access_token=create_access_token(subject=str(user.id)),
+        user=UserResponse.model_validate(user),
+    )
+
+
+@router.post(
+    "/auth/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_user(
+    request: UserRegisterRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    existing_user = user_crud.get_user_by_email(db, request.email)
+    if existing_user is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists.",
+        )
+
+    user = user_crud.create_user(db, request)
+    return build_token_response(user)
+
+
+@router.post("/auth/login", response_model=TokenResponse)
+def login_user(
+    request: UserLoginRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    user = user_crud.get_user_by_email(db, request.email)
+    if user is None or not verify_password(request.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return build_token_response(user)
+
+
 def build_corpus_response(corpus: Corpus) -> CorpusResponse:
     return CorpusResponse(
         id=corpus.id,
@@ -54,8 +107,11 @@ def build_corpus_response(corpus: Corpus) -> CorpusResponse:
 
 
 @router.get("/corpora", response_model=list[CorpusResponse])
-def list_corpora(db: Session = Depends(get_db)) -> list[CorpusResponse]:
-    corpora = corpus_crud.list_corpora(db)
+def list_corpora(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[CorpusResponse]:
+    corpora = corpus_crud.list_corpora(db, owner_id=current_user.id)
     return [build_corpus_response(corpus) for corpus in corpora]
 
 
@@ -67,8 +123,9 @@ def list_corpora(db: Session = Depends(get_db)) -> list[CorpusResponse]:
 def create_corpus(
     request: CorpusCreateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> CorpusResponse:
-    corpus = corpus_crud.create_corpus(db, request)
+    corpus = corpus_crud.create_corpus(db, request, owner_id=current_user.id)
     VectorStoreService().get_or_create_collection(corpus.id)
     return build_corpus_response(corpus)
 
@@ -77,8 +134,9 @@ def create_corpus(
 def delete_corpus(
     corpus_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> CorpusDeleteResponse:
-    deleted = corpus_crud.delete_corpus(db, corpus_id)
+    deleted = corpus_crud.delete_corpus(db, corpus_id, owner_id=current_user.id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -98,8 +156,9 @@ def upload_document(
     corpus_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentResponse:
-    corpus = corpus_crud.get_corpus(db, corpus_id)
+    corpus = corpus_crud.get_user_corpus(db, corpus_id, owner_id=current_user.id)
     if corpus is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -157,8 +216,13 @@ def upload_document(
 def search_corpus(
     request: SearchRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[RetrievedChunkResponse]:
-    corpus = corpus_crud.get_corpus(db, request.corpus_id)
+    corpus = corpus_crud.get_user_corpus(
+        db,
+        request.corpus_id,
+        owner_id=current_user.id,
+    )
     if corpus is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -208,8 +272,13 @@ def build_chat_message_response(message: ChatMessage) -> ChatMessageResponse:
 def answer_question(
     request: AnswerRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> AnswerResponse:
-    corpus = corpus_crud.get_corpus(db, request.corpus_id)
+    corpus = corpus_crud.get_user_corpus(
+        db,
+        request.corpus_id,
+        owner_id=current_user.id,
+    )
     if corpus is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -224,6 +293,7 @@ def answer_question(
     sources = [build_retrieved_chunk_response(result) for result in retrieved_chunks]
     recent_messages = chat_message_crud.list_chat_messages(
         db,
+        user_id=current_user.id,
         corpus_id=request.corpus_id,
         limit=5,
     )
@@ -248,6 +318,7 @@ def answer_question(
     _, answer_message = chat_message_crud.create_chat_turn(
         db=db,
         corpus_id=request.corpus_id,
+        user_id=current_user.id,
         question=request.question,
         answer=generated.answer,
         citations=sources,
@@ -265,9 +336,19 @@ def get_history(
     corpus_id: Optional[int] = Query(default=None),
     limit: int = Query(default=5, ge=1, le=50),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> HistoryResponse:
+    if corpus_id is not None:
+        corpus = corpus_crud.get_user_corpus(db, corpus_id, owner_id=current_user.id)
+        if corpus is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Corpus not found.",
+            )
+
     messages = chat_message_crud.list_chat_messages(
         db,
+        user_id=current_user.id,
         corpus_id=corpus_id,
         limit=limit,
     )
