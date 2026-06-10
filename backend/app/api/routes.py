@@ -17,9 +17,14 @@ from app.schemas.corpus import (
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
 from app.schemas.history import HistoryResponse
-from app.schemas.search import RetrievedChunkResponse, SearchRequest
+from app.schemas.search import AnswerRequest, AnswerResponse, RetrievedChunkResponse, SearchRequest
 from app.services.chunk_service import ChunkService
 from app.services.embedding_service import EmbeddingService
+from app.services.llm_service import (
+    LLMConfigurationError,
+    LLMGenerationError,
+    LLMService,
+)
 from app.services.pdf_processor import extract_pdf_text
 from app.services.vector_store_service import VectorStoreService
 
@@ -169,6 +174,55 @@ def search_corpus(
         )
         for result in results
     ]
+
+
+@router.post("/answer", response_model=AnswerResponse)
+def answer_question(
+    request: AnswerRequest,
+    db: Session = Depends(get_db),
+) -> AnswerResponse:
+    corpus = corpus_crud.get_corpus(db, request.corpus_id)
+    if corpus is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Corpus not found.",
+        )
+
+    retrieved_chunks = VectorStoreService().retrieve_by_text(
+        corpus_id=request.corpus_id,
+        query_text=request.question,
+        limit=request.limit,
+    )
+    sources = [
+        RetrievedChunkResponse(
+            chunk_id=result.chunk_id,
+            document_id=result.document_id,
+            corpus_id=result.corpus_id,
+            page_number=result.page_number,
+            chunk_index=result.chunk_index,
+            text=result.text,
+            distance=result.distance,
+        )
+        for result in retrieved_chunks
+    ]
+
+    try:
+        generated = LLMService().generate_answer(
+            question=request.question,
+            chunks=retrieved_chunks,
+        )
+    except LLMConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+    except LLMGenerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    return AnswerResponse(answer=generated.answer, sources=sources)
 
 
 @router.get("/history", response_model=HistoryResponse)

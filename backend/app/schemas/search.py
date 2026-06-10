@@ -15,3 +15,12 @@ class RetrievedChunkResponse(BaseModel):
     chunk_index: int
     text: str
     distance: float | None
+
+
+class AnswerRequest(SearchRequest):
+    pass
+
+
+class AnswerResponse(BaseModel):
+    answer: str
+    sources: list[RetrievedChunkResponse]

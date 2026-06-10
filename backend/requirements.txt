@@ -6,3 +6,4 @@ python-multipart
 pypdf
 sentence-transformers
 chromadb
+groq
