@@ -8,3 +8,5 @@ app.include_router(api_router)
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+print("USING FULL API VERSION")
