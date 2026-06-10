@@ -17,6 +17,7 @@ from app.schemas.corpus import (
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
 from app.schemas.history import HistoryResponse
+from app.schemas.search import RetrievedChunkResponse, SearchRequest
 from app.services.chunk_service import ChunkService
 from app.services.embedding_service import EmbeddingService
 from app.services.pdf_processor import extract_pdf_text
@@ -137,6 +138,37 @@ def upload_document(
     )
     VectorStoreService().add_document_chunks(corpus_id=corpus_id, document=document)
     return DocumentResponse.model_validate(document)
+
+
+@router.post("/search", response_model=list[RetrievedChunkResponse])
+def search_corpus(
+    request: SearchRequest,
+    db: Session = Depends(get_db),
+) -> list[RetrievedChunkResponse]:
+    corpus = corpus_crud.get_corpus(db, request.corpus_id)
+    if corpus is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Corpus not found.",
+        )
+
+    results = VectorStoreService().retrieve_by_text(
+        corpus_id=request.corpus_id,
+        query_text=request.question,
+        limit=request.limit,
+    )
+    return [
+        RetrievedChunkResponse(
+            chunk_id=result.chunk_id,
+            document_id=result.document_id,
+            corpus_id=result.corpus_id,
+            page_number=result.page_number,
+            chunk_index=result.chunk_index,
+            text=result.text,
+            distance=result.distance,
+        )
+        for result in results
+    ]
 
 
 @router.get("/history", response_model=HistoryResponse)
