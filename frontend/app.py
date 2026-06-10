@@ -1,5 +1,6 @@
 import requests
 import streamlit as st
+import os
 
 st.set_page_config(
     page_title="Domain Knowledge Copilot",
@@ -7,7 +8,10 @@ st.set_page_config(
     layout="wide",
 )
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv(
+    "BACKEND_URL",
+    "http://localhost:8000"
+)
 
 
 def api_url(path: str) -> str:
