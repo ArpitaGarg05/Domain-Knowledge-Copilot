@@ -66,8 +66,8 @@ class LLMService:
         sources = "\n\n".join(
             (
                 f"Source {index} "
-                f"(document_id={chunk.document_id}, page={chunk.page_number}, "
-                f"chunk_id={chunk.chunk_id}):\n{chunk.text}"
+                f"(file={chunk.filename}, page={chunk.page_number}, "
+                f"chunk_ref={chunk.chunk_reference}):\n{chunk.text}"
             )
             for index, chunk in enumerate(chunks, start=1)
         )

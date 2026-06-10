@@ -15,8 +15,10 @@ class RetrievalResult:
     chunk_id: int
     document_id: int
     corpus_id: int
+    filename: str
     page_number: int
     chunk_index: int
+    chunk_reference: str
     text: str
     distance: float | None
 
@@ -60,8 +62,10 @@ class VectorStoreService:
                     "chunk_id": chunk.id,
                     "document_id": document.id,
                     "corpus_id": corpus_id,
+                    "filename": document.filename,
                     "page_number": chunk.page_number,
                     "chunk_index": chunk.chunk_index,
+                    "chunk_reference": self.chunk_vector_id(chunk.id),
                     "model_name": chunk.embedding.model_name,
                     "vector_dimension": chunk.embedding.vector_dimension,
                 }
@@ -119,8 +123,15 @@ class VectorStoreService:
                     chunk_id=int(metadata["chunk_id"]),
                     document_id=int(metadata["document_id"]),
                     corpus_id=int(metadata["corpus_id"]),
+                    filename=str(metadata.get("filename", "Unknown file")),
                     page_number=int(metadata["page_number"]),
                     chunk_index=int(metadata["chunk_index"]),
+                    chunk_reference=str(
+                        metadata.get(
+                            "chunk_reference",
+                            self.chunk_vector_id(int(metadata["chunk_id"])),
+                        )
+                    ),
                     text=text,
                     distance=distance,
                 )

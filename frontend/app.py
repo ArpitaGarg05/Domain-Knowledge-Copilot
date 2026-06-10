@@ -9,22 +9,6 @@ st.set_page_config(
 
 API_BASE_URL = "http://localhost:8000"
 
-MOCK_MESSAGES = [
-    {
-        "role": "assistant",
-        "content": "Select a corpus and ask a question. Chat responses are still mock-only.",
-    },
-    {
-        "role": "user",
-        "content": "Which documents were updated most recently?",
-    },
-    {
-        "role": "assistant",
-        "content": "Mock response: the most recent update appears in the selected corpus summary.",
-    },
-]
-
-
 def api_url(path: str) -> str:
     return f"{API_BASE_URL}{path}"
 
@@ -69,6 +53,16 @@ def upload_pdf(corpus_id: int, uploaded_file: object) -> dict[str, object]:
         api_url(f"/corpora/{corpus_id}/upload"),
         files=files,
         timeout=15,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def answer_question(corpus_id: int, question: str) -> dict[str, object]:
+    response = requests.post(
+        api_url("/answer"),
+        json={"corpus_id": corpus_id, "question": question, "limit": 5},
+        timeout=60,
     )
     response.raise_for_status()
     return response.json()
@@ -212,7 +206,7 @@ def render_chat(corpora: list[dict[str, object]]) -> None:
         return
 
     st.caption(
-        f"Chat preview for {selected_corpus['name']}. Corpus metadata comes from FastAPI."
+        f"Ask questions about {selected_corpus['name']}."
     )
 
     with st.container(border=True):
@@ -220,12 +214,69 @@ def render_chat(corpora: list[dict[str, object]]) -> None:
         st.write(str(selected_corpus["description"]))
         st.caption(f"Documents: {selected_corpus['document_count']}")
 
-    for message in MOCK_MESSAGES:
+    message_key = f"chat_messages_{selected_corpus['id']}"
+    if message_key not in st.session_state:
+        st.session_state[message_key] = [
+            {
+                "role": "assistant",
+                "content": "Ask a question about the selected corpus.",
+                "sources": [],
+            }
+        ]
+
+    for message in st.session_state[message_key]:
         with st.chat_message(message["role"]):
             st.write(message["content"])
+            if message["role"] == "assistant" and message.get("sources"):
+                render_citations(message["sources"])
 
-    st.chat_input("Ask a question about this corpus", disabled=True)
-    st.caption("Chat input is disabled in this UI-only prototype.")
+    question = st.chat_input("Ask a question about this corpus")
+    if question:
+        st.session_state[message_key].append(
+            {"role": "user", "content": question, "sources": []}
+        )
+        try:
+            with st.spinner("Retrieving sources and generating answer..."):
+                response = answer_question(int(selected_corpus["id"]), question)
+            st.session_state[message_key].append(
+                {
+                    "role": "assistant",
+                    "content": response["answer"],
+                    "sources": response["sources"],
+                }
+            )
+            st.rerun()
+        except requests.RequestException as error:
+            st.session_state[message_key].append(
+                {
+                    "role": "assistant",
+                    "content": "I could not generate an answer.",
+                    "sources": [],
+                }
+            )
+            render_api_error(error)
+
+
+def render_citations(sources: list[dict[str, object]]) -> None:
+    st.caption("Citations")
+    for source in sources:
+        citation = (
+            f"{source['filename']} | page {source['page_number']} | "
+            f"{source['chunk_reference']}"
+        )
+        st.markdown(f"- `{citation}`")
+
+    with st.expander("View retrieved sources"):
+        for source in sources:
+            st.markdown(
+                (
+                    f"**{source['filename']}**  \n"
+                    f"Page {source['page_number']} | "
+                    f"Chunk `{source['chunk_reference']}`"
+                )
+            )
+            st.write(source["text"])
+            st.divider()
 
 
 def render_settings(corpora: list[dict[str, object]]) -> None:

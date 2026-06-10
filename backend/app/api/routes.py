@@ -17,7 +17,12 @@ from app.schemas.corpus import (
 from app.schemas.document import DocumentResponse
 from app.schemas.health import HealthResponse
 from app.schemas.history import HistoryResponse
-from app.schemas.search import AnswerRequest, AnswerResponse, RetrievedChunkResponse, SearchRequest
+from app.schemas.search import (
+    AnswerRequest,
+    AnswerResponse,
+    RetrievedChunkResponse,
+    SearchRequest,
+)
 from app.services.chunk_service import ChunkService
 from app.services.embedding_service import EmbeddingService
 from app.services.llm_service import (
@@ -163,17 +168,23 @@ def search_corpus(
         limit=request.limit,
     )
     return [
-        RetrievedChunkResponse(
-            chunk_id=result.chunk_id,
-            document_id=result.document_id,
-            corpus_id=result.corpus_id,
-            page_number=result.page_number,
-            chunk_index=result.chunk_index,
-            text=result.text,
-            distance=result.distance,
-        )
+        build_retrieved_chunk_response(result)
         for result in results
     ]
+
+
+def build_retrieved_chunk_response(result) -> RetrievedChunkResponse:
+    return RetrievedChunkResponse(
+        chunk_id=result.chunk_id,
+        document_id=result.document_id,
+        corpus_id=result.corpus_id,
+        filename=result.filename,
+        page_number=result.page_number,
+        chunk_index=result.chunk_index,
+        chunk_reference=result.chunk_reference,
+        text=result.text,
+        distance=result.distance,
+    )
 
 
 @router.post("/answer", response_model=AnswerResponse)
@@ -193,18 +204,7 @@ def answer_question(
         query_text=request.question,
         limit=request.limit,
     )
-    sources = [
-        RetrievedChunkResponse(
-            chunk_id=result.chunk_id,
-            document_id=result.document_id,
-            corpus_id=result.corpus_id,
-            page_number=result.page_number,
-            chunk_index=result.chunk_index,
-            text=result.text,
-            distance=result.distance,
-        )
-        for result in retrieved_chunks
-    ]
+    sources = [build_retrieved_chunk_response(result) for result in retrieved_chunks]
 
     try:
         generated = LLMService().generate_answer(
