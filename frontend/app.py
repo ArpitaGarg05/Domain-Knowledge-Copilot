@@ -143,7 +143,7 @@ def upload_pdf(corpus_id: int, uploaded_file: object) -> dict[str, object]:
         api_url(f"/corpora/{corpus_id}/upload"),
         files=files,
         headers=auth_headers(),
-        timeout=15,
+        timeout=180,
     )
     response.raise_for_status()
     return response.json()
@@ -168,6 +168,13 @@ def load_backend_data() -> tuple[list[dict[str, object]], list[str]]:
 def render_api_error(error: requests.RequestException) -> None:
     st.error("Backend request failed.")
     st.caption(f"Backend URL: {API_BASE_URL}")
+
+    if isinstance(error, requests.Timeout):
+        st.caption(
+            "The backend took too long to respond. PDF upload can be slow while "
+            "the deployed service extracts text and generates embeddings."
+        )
+        return
 
     if isinstance(error, requests.HTTPError) and error.response is not None:
         status_code = error.response.status_code
