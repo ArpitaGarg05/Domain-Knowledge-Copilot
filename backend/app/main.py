@@ -33,6 +33,15 @@ app.add_middleware(
 app.include_router(api_router)
 
 
+@app.get("/")
+def root():
+    return {
+        "name": "Domain Knowledge Copilot API",
+        "status": "ok",
+        "health": "/health",
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "healthy"}

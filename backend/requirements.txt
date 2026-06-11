@@ -7,4 +7,4 @@ pypdf
 chromadb
 groq
 sentence-transformers==5.1.0
-psycopg2-binary==2.9.10
+psycopg[binary]
