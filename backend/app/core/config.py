@@ -5,7 +5,10 @@ from pydantic import BaseModel
 
 
 class Settings(BaseModel):
-    database_url: str = "sqlite:///./domain_knowledge_copilot.db"
+    database_url: str = os.getenv(
+        "DATABASE_URL",
+        "sqlite:///./domain_knowledge_copilot.db",
+    )
     upload_dir: str = "uploads"
     chroma_dir: str = "chroma"
     groq_api_key: Optional[str] = os.getenv("GROQ_API_KEY")
