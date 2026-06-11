@@ -126,7 +126,6 @@ def create_corpus(
     current_user: User = Depends(get_current_user),
 ) -> CorpusResponse:
     corpus = corpus_crud.create_corpus(db, request, owner_id=current_user.id)
-    VectorStoreService().get_or_create_collection(corpus.id)
     return build_corpus_response(corpus)
 
 

@@ -1,14 +1,15 @@
 import json
 from dataclasses import dataclass
-from typing import Optional, Union
-
-import chromadb
-from chromadb.api.models.Collection import Collection
+from typing import TYPE_CHECKING, Optional, Union
 
 from app.core.config import settings
 from app.models.document import Document
 from app.services.chunk_service import TextChunk
 from app.services.embedding_service import EmbeddingService
+
+if TYPE_CHECKING:
+    from chromadb.api import ClientAPI
+    from chromadb.api.models.Collection import Collection
 
 
 @dataclass(frozen=True)
@@ -26,12 +27,14 @@ class RetrievalResult:
 
 class VectorStoreService:
     def __init__(self, persist_directory: str = settings.chroma_dir) -> None:
-        self.client = chromadb.PersistentClient(path=persist_directory)
+        import chromadb
+
+        self.client: "ClientAPI" = chromadb.PersistentClient(path=persist_directory)
 
     def collection_name(self, corpus_id: int) -> str:
         return f"corpus_{corpus_id}"
 
-    def get_or_create_collection(self, corpus_id: int) -> Collection:
+    def get_or_create_collection(self, corpus_id: int) -> "Collection":
         return self.client.get_or_create_collection(
             name=self.collection_name(corpus_id),
             metadata={"corpus_id": corpus_id},
