@@ -170,11 +170,22 @@ def render_api_error(error: requests.RequestException) -> None:
     st.caption(f"Backend URL: {API_BASE_URL}")
 
     if isinstance(error, requests.HTTPError) and error.response is not None:
+        status_code = error.response.status_code
+        content_type = error.response.headers.get("content-type", "")
+        if status_code >= 500 and "text/html" in content_type:
+            st.caption(
+                f"{status_code}: Backend service is unavailable. "
+                "Check the backend deployment logs on Render."
+            )
+            return
+
         try:
             detail = error.response.json().get("detail", str(error))
         except ValueError:
-            detail = error.response.text or str(error)
-        st.caption(f"{error.response.status_code}: {detail}")
+            detail = (error.response.text or str(error)).strip()
+            if len(detail) > 500:
+                detail = f"{detail[:500]}..."
+        st.caption(f"{status_code}: {detail}")
     else:
         st.caption(str(error))
 
