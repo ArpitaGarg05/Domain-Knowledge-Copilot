@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 from app.services.pdf_processor import ExtractedPdfPage
 
-DEFAULT_CHUNK_SIZE = 800
-DEFAULT_CHUNK_OVERLAP = 100
+DEFAULT_CHUNK_SIZE = 1000
+DEFAULT_CHUNK_OVERLAP = 200
 MIN_CHUNK_SIZE = 500
 MAX_CHUNK_SIZE = 1000
 
