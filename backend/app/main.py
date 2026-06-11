@@ -1,8 +1,23 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from app.api.routes import router as api_router
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Domain Knowledge Copilot API")
+from app.api.routes import router as api_router
+from app.db.init_db import run_migrations
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    run_migrations()
+    yield
+
+
+app = FastAPI(
+    title="Domain Knowledge Copilot API",
+    lifespan=lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -16,6 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
 
 @app.get("/health")
 def health():
