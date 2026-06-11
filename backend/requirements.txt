@@ -4,6 +4,6 @@ sqlalchemy
 alembic
 python-multipart
 pypdf
-sentence-transformers
 chromadb
 groq
+sentence-transformers==5.1.0
