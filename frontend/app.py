@@ -1,17 +1,62 @@
+import os
+from datetime import datetime
+from html import escape
+from typing import Any, Optional
+
 import requests
 import streamlit as st
-import os
+
+from styles import (
+    empty_state,
+    format_bytes,
+    inject_styles,
+    metric_grid,
+    page_header,
+    section_title,
+    status_badge,
+)
+
 
 st.set_page_config(
-    page_title="Domain Knowledge Copilot",
-    page_icon="D",
+    page_title="Knowledge Co-Pilot",
+    page_icon="◈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+inject_styles()
 
-API_BASE_URL = os.getenv(
-    "BACKEND_URL",
-    "http://localhost:8000"
-)
+API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+PAGES = [
+    "Corpus Dashboard",
+    "Corpus Detail",
+    "Corpus Chat",
+    "Chat History",
+    "Settings",
+]
+st.session_state.setdefault("expanded_citations", False)
+st.session_state.setdefault("comfortable_density", True)
+st.session_state.setdefault("reduce_motion", False)
+st.session_state.setdefault("default_workspace", "Corpus Dashboard")
+
+
+def inject_preference_styles() -> None:
+    rules: list[str] = []
+    if st.session_state.get("reduce_motion", False):
+        rules.append(
+            "*,*::before,*::after{animation:none!important;"
+            "transition:none!important;scroll-behavior:auto!important}"
+        )
+    if not st.session_state.get("comfortable_density", True):
+        rules.append(
+            ".main .block-container{padding-top:1rem!important}"
+            ".dk-metric{min-height:92px!important;padding:.75rem!important}"
+            "[data-testid=stChatMessage]{padding:.75rem .9rem!important}"
+        )
+    if rules:
+        st.markdown(f"<style>{''.join(rules)}</style>", unsafe_allow_html=True)
+
+
+inject_preference_styles()
 
 
 def api_url(path: str) -> str:
@@ -20,118 +65,86 @@ def api_url(path: str) -> str:
 
 def auth_headers() -> dict[str, str]:
     token = st.session_state.get("access_token")
-    if not token:
-        return {}
-
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def register_user(email: str, display_name: str, password: str) -> dict[str, object]:
-    response = requests.post(
-        api_url("/auth/register"),
-        json={
-            "email": email,
-            "display_name": display_name,
-            "password": password,
-        },
-        timeout=5,
+def request_json(
+    method: str,
+    path: str,
+    *,
+    timeout: int = 10,
+    **kwargs: Any,
+) -> Any:
+    headers = dict(kwargs.pop("headers", {}))
+    headers.update(auth_headers())
+    response = requests.request(
+        method,
+        api_url(path),
+        headers=headers,
+        timeout=timeout,
+        **kwargs,
     )
     response.raise_for_status()
     return response.json()
 
 
-def login_user(email: str, password: str) -> dict[str, object]:
-    response = requests.post(
-        api_url("/auth/login"),
+def register_user(email: str, display_name: str, password: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        "/auth/register",
+        json={"email": email, "display_name": display_name, "password": password},
+        timeout=8,
+    )
+
+
+def login_user(email: str, password: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        "/auth/login",
         json={"email": email, "password": password},
-        timeout=5,
+        timeout=8,
     )
-    response.raise_for_status()
-    return response.json()
 
 
-def store_auth_session(auth_response: dict[str, object]) -> None:
-    st.session_state.access_token = auth_response["access_token"]
-    st.session_state.current_user = auth_response["user"]
-
-
-def clear_auth_session() -> None:
-    for key in (
-        "access_token",
-        "current_user",
-        "selected_corpus_id",
-        "pending_selected_corpus_id",
-    ):
-        st.session_state.pop(key, None)
-
-
-def queue_selected_corpus(corpus_id: object) -> None:
-    st.session_state.pending_selected_corpus_id = corpus_id
-
-
-def apply_pending_selected_corpus(corpora: list[dict[str, object]]) -> None:
-    if "pending_selected_corpus_id" in st.session_state:
-        pending_id = st.session_state.pop("pending_selected_corpus_id")
-        if any(str(corpus["id"]) == str(pending_id) for corpus in corpora):
-            st.session_state.selected_corpus_id = pending_id
-        else:
-            st.session_state.pop("selected_corpus_id", None)
-
-    if corpora and (
-        "selected_corpus_id" not in st.session_state
-        or not any(
-            str(corpus["id"]) == str(st.session_state.selected_corpus_id)
-            for corpus in corpora
-        )
-    ):
-        st.session_state.selected_corpus_id = corpora[0]["id"]
-
-
-def fetch_corpora() -> list[dict[str, object]]:
-    response = requests.get(api_url("/corpora"), headers=auth_headers(), timeout=5)
-    response.raise_for_status()
-    return response.json()
-
-
-def fetch_history() -> list[str]:
-    response = requests.get(api_url("/history"), headers=auth_headers(), timeout=5)
-    response.raise_for_status()
-    return response.json()["items"]
-
-
-def fetch_chat_history(corpus_id: int, limit: int = 20) -> list[dict[str, object]]:
-    response = requests.get(
-        api_url("/history"),
-        params={"corpus_id": corpus_id, "limit": limit},
-        headers=auth_headers(),
-        timeout=5,
+def update_profile(display_name: str) -> dict[str, Any]:
+    return request_json(
+        "PATCH",
+        "/auth/profile",
+        json={"display_name": display_name},
     )
-    response.raise_for_status()
-    return response.json()["messages"]
 
 
-def create_corpus(name: str, description: str) -> dict[str, object]:
-    response = requests.post(
-        api_url("/corpora"),
+def fetch_corpora() -> list[dict[str, Any]]:
+    return request_json("GET", "/corpora")
+
+
+def fetch_history(
+    corpus_id: Optional[int] = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {"limit": limit}
+    if corpus_id is not None:
+        params["corpus_id"] = corpus_id
+    return request_json("GET", "/history", params=params)["messages"]
+
+
+def fetch_corpus_documents(corpus_id: int) -> dict[str, Any]:
+    return request_json("GET", f"/corpora/{corpus_id}/documents")
+
+
+def create_corpus(name: str, description: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        "/corpora",
         json={"name": name, "description": description},
-        headers=auth_headers(),
-        timeout=5,
     )
-    response.raise_for_status()
-    return response.json()
 
 
-def delete_corpus(corpus_id: int) -> dict[str, object]:
-    response = requests.delete(
-        api_url(f"/corpora/{corpus_id}"),
-        headers=auth_headers(),
-        timeout=5,
-    )
-    response.raise_for_status()
-    return response.json()
+def delete_corpus(corpus_id: int) -> dict[str, Any]:
+    return request_json("DELETE", f"/corpora/{corpus_id}")
 
 
-def upload_pdf(corpus_id: int, uploaded_file: object) -> dict[str, object]:
+def upload_pdf(corpus_id: int, uploaded_file: Any) -> dict[str, Any]:
     files = {
         "file": (
             uploaded_file.name,
@@ -139,377 +152,817 @@ def upload_pdf(corpus_id: int, uploaded_file: object) -> dict[str, object]:
             "application/pdf",
         )
     }
-    response = requests.post(
-        api_url(f"/corpora/{corpus_id}/upload"),
+    return request_json(
+        "POST",
+        f"/corpora/{corpus_id}/upload",
         files=files,
-        headers=auth_headers(),
         timeout=180,
     )
-    response.raise_for_status()
-    return response.json()
 
 
-def answer_question(corpus_id: int, question: str) -> dict[str, object]:
-    response = requests.post(
-        api_url("/answer"),
+def answer_question(corpus_id: int, question: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        "/answer",
         json={"corpus_id": corpus_id, "question": question, "limit": 5},
-        headers=auth_headers(),
         timeout=60,
     )
-    response.raise_for_status()
-    return response.json()
 
 
-def load_backend_data() -> tuple[list[dict[str, object]], list[str]]:
-    with st.spinner("Loading backend data..."):
-        return fetch_corpora(), fetch_history()
+def store_auth_session(auth_response: dict[str, Any]) -> None:
+    st.session_state.access_token = auth_response["access_token"]
+    st.session_state.current_user = auth_response["user"]
+    st.session_state.pending_page = st.session_state.get(
+        "default_workspace",
+        "Corpus Dashboard",
+    )
+
+
+def clear_auth_session() -> None:
+    preserved = {
+        "reduce_motion": st.session_state.get("reduce_motion", False),
+        "expanded_citations": st.session_state.get("expanded_citations", False),
+        "comfortable_density": st.session_state.get("comfortable_density", True),
+        "default_workspace": st.session_state.get(
+            "default_workspace",
+            "Corpus Dashboard",
+        ),
+    }
+    st.session_state.clear()
+    st.session_state.update(preserved)
+
+
+def queue_navigation(page: str, corpus_id: Optional[int] = None) -> None:
+    st.session_state.pending_page = page
+    if corpus_id is not None:
+        st.session_state.pending_selected_corpus_id = corpus_id
+
+
+def apply_pending_navigation(corpora: list[dict[str, Any]]) -> None:
+    if "pending_page" in st.session_state:
+        st.session_state.active_page = st.session_state.pop("pending_page")
+
+    if "pending_selected_corpus_id" in st.session_state:
+        pending = st.session_state.pop("pending_selected_corpus_id")
+        if any(str(corpus["id"]) == str(pending) for corpus in corpora):
+            st.session_state.selected_corpus_id = pending
+
+    valid_ids = {str(corpus["id"]) for corpus in corpora}
+    current = st.session_state.get("selected_corpus_id")
+    if corpora and str(current) not in valid_ids:
+        st.session_state.selected_corpus_id = corpora[0]["id"]
+    if not corpora:
+        st.session_state.pop("selected_corpus_id", None)
+
+
+def selected_corpus(corpora: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    selected_id = st.session_state.get("selected_corpus_id")
+    return next(
+        (
+            corpus
+            for corpus in corpora
+            if str(corpus["id"]) == str(selected_id)
+        ),
+        corpora[0] if corpora else None,
+    )
 
 
 def render_api_error(error: requests.RequestException) -> None:
-    st.error("Backend request failed.")
-    st.caption(f"Backend URL: {API_BASE_URL}")
-
+    detail = str(error)
     if isinstance(error, requests.Timeout):
-        st.caption(
-            "The backend took too long to respond. PDF upload can be slow while "
-            "the deployed service extracts text and generates embeddings."
-        )
-        return
-
-    if isinstance(error, requests.HTTPError) and error.response is not None:
-        status_code = error.response.status_code
-        content_type = error.response.headers.get("content-type", "")
-        if status_code >= 500 and "text/html" in content_type:
-            st.caption(
-                f"{status_code}: Backend service is unavailable. "
-                "Check the backend deployment logs on Render."
-            )
-            return
-
+        detail = "The service took too long to respond."
+    elif isinstance(error, requests.HTTPError) and error.response is not None:
         try:
-            detail = error.response.json().get("detail", str(error))
+            detail = error.response.json().get("detail", detail)
         except ValueError:
-            detail = (error.response.text or str(error)).strip()
-            if len(detail) > 500:
-                detail = f"{detail[:500]}..."
-        st.caption(f"{status_code}: {detail}")
-    else:
-        st.caption(str(error))
+            detail = error.response.text.strip() or detail
+    st.error(detail)
 
 
 def render_auth_page() -> None:
-    st.title("Domain Knowledge Copilot")
-    st.caption("Sign in to manage your corpora and chat history.")
-
-    login_tab, register_tab = st.tabs(["Login", "Register"])
-
-    with login_tab:
-        with st.form("login-form"):
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Password", type="password", key="login_password")
-            submitted = st.form_submit_button("Login", use_container_width=True)
-
-        if submitted:
-            try:
-                with st.spinner("Signing in..."):
-                    auth_response = login_user(email.strip(), password)
-                store_auth_session(auth_response)
-                st.rerun()
-            except requests.RequestException as error:
-                render_api_error(error)
-
-    with register_tab:
-        with st.form("register-form"):
-            display_name = st.text_input("Display name")
-            email = st.text_input("Email", key="register_email")
-            password = st.text_input(
-                "Password",
-                type="password",
-                key="register_password",
-            )
-            submitted = st.form_submit_button("Create Account", use_container_width=True)
-
-        if submitted:
-            try:
-                with st.spinner("Creating account..."):
-                    auth_response = register_user(
-                        email=email.strip(),
-                        display_name=display_name.strip(),
-                        password=password,
-                    )
-                store_auth_session(auth_response)
-                st.rerun()
-            except requests.RequestException as error:
-                render_api_error(error)
-
-
-def get_selected_corpus(corpora: list[dict[str, object]]) -> dict[str, object]:
-    if not corpora:
-        return {}
-
-    selected_id = st.session_state.get("selected_corpus_id")
-    matching_corpus = next(
-        (corpus for corpus in corpora if str(corpus["id"]) == str(selected_id)),
-        None,
+    st.markdown(
+        """
+        <div class="dk-auth-shell">
+          <h1>Knowledge Co-Pilot</h1>
+          <p>● &nbsp; Precision Intelligence Secured</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    return matching_corpus or corpora[0]
+
+    _, center, _ = st.columns([1, 1.05, 1])
+    with center:
+        with st.container(key="auth_card"):
+            st.markdown('<div class="dk-auth-marker"></div>', unsafe_allow_html=True)
+            login_tab, register_tab = st.tabs(["System Access", "Create Account"])
+
+            with login_tab:
+                st.subheader("Initialize Session")
+                st.caption("Authenticate to enter the research environment.")
+                with st.form("login-form"):
+                    email = st.text_input(
+                        "Corporate email",
+                        placeholder="name@corporation.com",
+                    )
+                    password = st.text_input(
+                        "Access key",
+                        type="password",
+                        placeholder="••••••••••••",
+                    )
+                    submitted = st.form_submit_button(
+                        "Initialize Session  →",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                if submitted:
+                    try:
+                        with st.spinner("Establishing secure session..."):
+                            auth_response = login_user(email.strip(), password)
+                        store_auth_session(auth_response)
+                        st.rerun()
+                    except requests.RequestException as error:
+                        render_api_error(error)
+
+            with register_tab:
+                st.subheader("Create Account")
+                st.caption("Initialize your secure research environment.")
+                with st.form("register-form"):
+                    display_name = st.text_input(
+                        "Operator name",
+                        placeholder="Full name",
+                    )
+                    email = st.text_input(
+                        "Corporate email",
+                        placeholder="name@organization.ai",
+                        key="register_email",
+                    )
+                    password = st.text_input(
+                        "Access key",
+                        type="password",
+                        placeholder="Minimum 8 characters",
+                        key="register_password",
+                    )
+                    submitted = st.form_submit_button(
+                        "Register  →",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                if submitted:
+                    try:
+                        with st.spinner("Provisioning account..."):
+                            auth_response = register_user(
+                                email.strip(),
+                                display_name.strip(),
+                                password,
+                            )
+                        store_auth_session(auth_response)
+                        st.rerun()
+                    except requests.RequestException as error:
+                        render_api_error(error)
+
+    st.markdown(
+        """
+        <div class="dk-system-strip">
+          <span><b>● Server core active</b></span>
+          <span>Encrypted transport · Session isolation</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-def render_sidebar(corpora: list[dict[str, object]]) -> str:
-    st.sidebar.title("Domain Knowledge Copilot")
-    st.sidebar.caption(f"API: {API_BASE_URL}")
-    current_user = st.session_state.get("current_user", {})
-    if current_user:
-        st.sidebar.caption(f"Signed in as {current_user.get('email')}")
-        if st.sidebar.button("Logout", use_container_width=True):
-            clear_auth_session()
+def render_sidebar(corpora: list[dict[str, Any]]) -> str:
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="dk-brand">
+              <div class="dk-brand__title">Knowledge<br>Co-Pilot</div>
+              <div class="dk-brand__sub">Precision Intelligence</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("＋  New Corpus", type="primary", use_container_width=True):
+            queue_navigation("Corpus Dashboard")
+            st.session_state.show_create_corpus = True
             st.rerun()
 
-    st.sidebar.divider()
-
-    if corpora:
-        st.sidebar.selectbox(
-            "Corpus",
-            options=[corpus["id"] for corpus in corpora],
-            format_func=lambda corpus_id: next(
-                corpus["name"] for corpus in corpora if corpus["id"] == corpus_id
-            ),
-            key="selected_corpus_id",
+        st.markdown(
+            '<div class="dk-sidebar-label">Workspace</div>',
+            unsafe_allow_html=True,
         )
-    else:
-        st.sidebar.info("No corpora yet.")
+        page = st.radio(
+            "Workspace",
+            PAGES,
+            key="active_page",
+            label_visibility="collapsed",
+        )
 
-    st.sidebar.divider()
+        if corpora:
+            st.markdown(
+                '<div class="dk-sidebar-label">Active corpus</div>',
+                unsafe_allow_html=True,
+            )
+            st.selectbox(
+                "Active corpus",
+                options=[corpus["id"] for corpus in corpora],
+                format_func=lambda corpus_id: next(
+                    corpus["name"]
+                    for corpus in corpora
+                    if corpus["id"] == corpus_id
+                ),
+                key="selected_corpus_id",
+                label_visibility="collapsed",
+            )
 
-    return st.sidebar.radio(
-        "Navigation",
-        options=["Dashboard", "Corpus Chat", "Corpus Settings"],
-        key="active_page",
-    )
+        user = st.session_state.get("current_user", {})
+        initial = escape(str(user.get("display_name", "U"))[:1].upper())
+        st.markdown(
+            f"""
+            <div class="dk-user">
+              <div class="dk-avatar">{initial}</div>
+              <div>
+                <strong>{escape(str(user.get("display_name", "Operator")))}</strong>
+                <span>{escape(str(user.get("email", "")))}</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("End Session", use_container_width=True):
+            clear_auth_session()
+            st.rerun()
+    return page
 
 
-def render_corpus_card(corpus: dict[str, object]) -> None:
+def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
     with st.container(border=True):
-        top_line, metric_line = st.columns([3, 1])
-        with top_line:
-            st.subheader(str(corpus["name"]))
-            st.write(str(corpus["description"]))
-        with metric_line:
-            st.metric("Documents", corpus["document_count"])
-        st.caption(f"Corpus ID: {corpus['id']}")
+        st.markdown(
+            f"""
+            <div class="dk-corpus-card">
+              <div class="dk-corpus-card__top">
+                <span class="dk-chip">Corpus {int(corpus["id"]):02d}</span>
+                {status_badge("Active")}
+              </div>
+              <h3>{escape(str(corpus["name"]))}</h3>
+              <p>{escape(str(corpus.get("description") or "No description supplied."))}</p>
+              <div class="dk-corpus-card__footer">
+                <span>{int(corpus["document_count"]):02d} documents</span>
+                <span>Private workspace</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.button(
+            "Open Corpus  →",
+            key=f"open-corpus-{index}",
+            use_container_width=True,
+            on_click=queue_navigation,
+            args=("Corpus Detail", int(corpus["id"])),
+        )
 
 
-def render_dashboard(corpora: list[dict[str, object]], history: list[str]) -> None:
-    selected_corpus = get_selected_corpus(corpora)
+def render_create_corpus() -> None:
+    with st.container(border=True):
+        st.markdown('<div class="dk-label">Provision corpus</div>', unsafe_allow_html=True)
+        st.subheader("Create a knowledge workspace")
+        with st.form("create-corpus-form", clear_on_submit=True):
+            name = st.text_input("Corpus name", placeholder="Research intelligence")
+            description = st.text_area(
+                "Description",
+                placeholder="What domain knowledge will this corpus contain?",
+            )
+            submitted = st.form_submit_button(
+                "Create Corpus",
+                type="primary",
+                use_container_width=True,
+            )
+        if submitted:
+            if not name.strip():
+                st.warning("Enter a corpus name.")
+            else:
+                try:
+                    created = create_corpus(name.strip(), description.strip())
+                    st.session_state.show_create_corpus = False
+                    queue_navigation("Corpus Detail", int(created["id"]))
+                    st.rerun()
+                except requests.RequestException as error:
+                    render_api_error(error)
 
-    st.title("Dashboard")
-    st.caption("Backend-connected overview using SQLite-backed corpus data.")
 
-    upload_message = st.session_state.pop("upload_message", None)
-    if upload_message:
-        st.success(upload_message)
-
-    summary_cols = st.columns(3)
-    summary_cols[0].metric("Corpora", len(corpora))
-    summary_cols[1].metric(
-        "Documents",
-        sum(int(corpus["document_count"]) for corpus in corpora),
+def render_dashboard(corpora: list[dict[str, Any]]) -> None:
+    page_header(
+        "Knowledge workspace",
+        "Corpus Dashboard",
+        "Organize private document collections and monitor the intelligence layer.",
     )
-    summary_cols[2].metric("Selected Corpus", selected_corpus.get("name", "None"))
+    metric_grid(
+        [
+            ("Active corpora", str(len(corpora)), "Private research spaces", "primary"),
+            (
+                "Indexed documents",
+                str(sum(int(c["document_count"]) for c in corpora)),
+                "Across all corpora",
+                "success",
+            ),
+            ("Retrieval mode", "RAG", "Grounded source answers", None),
+            ("System state", "Online", API_BASE_URL, "success"),
+        ]
+    )
 
-    st.divider()
+    if st.session_state.get("show_create_corpus", False) or not corpora:
+        render_create_corpus()
 
-    heading_col, action_col = st.columns([3, 1])
-    with heading_col:
-        st.header("Corpus List")
-    with action_col:
-        if selected_corpus:
+    section_title("Knowledge corpora", f"{len(corpora)} workspaces")
+    if not corpora:
+        empty_state(
+            "No corpora provisioned",
+            "Create a corpus to begin indexing domain documents.",
+            "＋",
+        )
+        return
+
+    columns = st.columns(2)
+    for index, corpus in enumerate(corpora):
+        with columns[index % 2]:
+            render_corpus_card(corpus, index)
+
+    with st.expander("Create another corpus"):
+        render_create_corpus()
+
+
+def document_row(document: dict[str, Any]) -> None:
+    uploaded = format_datetime(document.get("uploaded_at"), "%d %b %Y · %H:%M")
+    status = str(document.get("indexing_status", "indexed"))
+    st.markdown(
+        f"""
+        <div class="dk-document">
+          <div class="dk-document__name">
+            <div class="dk-file-icon">PDF</div>
+            <div>
+              <strong>{escape(str(document["filename"]))}</strong>
+              <small>Uploaded {escape(uploaded)}</small>
+            </div>
+          </div>
+          <div class="dk-doc-stat"><label>Pages</label><span>{int(document["page_count"])}</span></div>
+          <div class="dk-doc-stat"><label>Chunks</label><span>{int(document["chunk_count"])}</span></div>
+          <div class="dk-doc-stat"><label>Storage</label><span>{escape(format_bytes(int(document["file_size_bytes"])))}</span></div>
+          <div>{status_badge(status)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
+    corpus = selected_corpus(corpora)
+    if corpus is None:
+        page_header("Corpus control", "Corpus Detail", "Manage an indexed knowledge workspace.")
+        empty_state("No active corpus", "Create a corpus from the dashboard first.")
+        return
+
+    try:
+        detail = fetch_corpus_documents(int(corpus["id"]))
+    except requests.RequestException as error:
+        render_api_error(error)
+        return
+
+    page_header(
+        f"Corpus {int(corpus['id']):02d} / Active",
+        str(corpus["name"]),
+        str(corpus.get("description") or "Private domain knowledge corpus."),
+    )
+    metrics = [
+        ("Documents", str(detail["total_documents"]), "Uploaded source files", "primary"),
+        ("Pages", f'{int(detail["total_pages"]):,}', "Extracted and searchable", None),
+        ("Vector chunks", f'{int(detail["total_embeddings"]):,}', "Available for retrieval", "success"),
+        ("Storage", format_bytes(int(detail["total_storage_bytes"])), "Uploaded PDF footprint", None),
+    ]
+    metric_grid(metrics)
+
+    inventory, action = st.columns([1.65, 0.85], gap="large")
+    with inventory:
+        section_title("Document inventory", f'{detail["total_documents"]} indexed')
+        if detail["documents"]:
+            for document in detail["documents"]:
+                document_row(document)
+        else:
+            empty_state(
+                "Corpus is waiting for source material",
+                "Upload a text-based PDF to initialize retrieval.",
+                "PDF",
+            )
+
+    with action:
+        section_title("Data ingestion", "PDF pipeline")
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="dk-label">Upload action area</div>
+                <h3 style="margin:.45rem 0 .25rem">Index new material</h3>
+                <p style="font-size:13px;margin:0 0 .8rem">
+                  Text is extracted page-by-page, chunked, embedded, and added
+                  to this corpus's private vector collection.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
             uploaded_pdf = st.file_uploader(
-                "Upload PDF",
+                "Source document",
                 type=["pdf"],
                 accept_multiple_files=False,
+                key=f"detail-upload-{corpus['id']}",
             )
             if st.button(
-                "Upload",
+                "Upload & Index",
+                type="primary",
                 use_container_width=True,
                 disabled=uploaded_pdf is None,
             ):
                 try:
-                    with st.spinner("Uploading PDF..."):
-                        document = upload_pdf(int(selected_corpus["id"]), uploaded_pdf)
-                    st.session_state.upload_message = (
-                        f"Uploaded {document['filename']} to {selected_corpus['name']} "
-                        f"and extracted {document['page_count']} page(s)."
+                    with st.spinner("Extracting, chunking, and vectorizing..."):
+                        document = upload_pdf(int(corpus["id"]), uploaded_pdf)
+                    st.success(
+                        f"{document['filename']} indexed into "
+                        f"{document['chunk_count']} chunks."
                     )
                     st.rerun()
                 except requests.RequestException as error:
                     render_api_error(error)
-        else:
-            st.button("Upload", use_container_width=True, disabled=True)
-            st.caption("Create a corpus first")
 
-    if corpora:
-        for corpus in corpora:
-            render_corpus_card(corpus)
-    else:
-        st.info("No corpora found. Create one from Corpus Settings.")
+        with st.container(border=True):
+            st.markdown(
+                f"""
+                <div class="dk-label">Index health</div>
+                <h3 style="margin:.45rem 0 .75rem">Retrieval readiness</h3>
+                <div style="display:grid;gap:.7rem">
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="color:#918fa1;font-size:12px">Vector store</span>
+                    {status_badge("Connected")}
+                  </div>
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="color:#918fa1;font-size:12px">Embeddings</span>
+                    <code style="color:#c3c0ff">{int(detail["total_embeddings"]):,}</code>
+                  </div>
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="color:#918fa1;font-size:12px">Isolation</span>
+                    <code style="color:#d4e4fa">corpus_{int(corpus["id"])}</code>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-    st.divider()
-    st.header("Recent History")
-    for item in history:
-        st.write(f"- {item}")
+
+def render_citations(sources: list[dict[str, Any]]) -> None:
+    if not sources:
+        return
+    st.markdown(
+        f"""
+        <div class="dk-section-title" style="margin:.9rem 0 .45rem">
+          <h2 style="font-size:14px">Retrieved sources</h2>
+          <span>{len(sources)} evidence chunks · retrieval complete</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    default_expanded = bool(st.session_state.get("expanded_citations", False))
+    for index, source in enumerate(sources, start=1):
+        preview = str(source.get("text", "")).strip()
+        st.markdown(
+            f"""
+            <div class="dk-source-head">
+              <div class="dk-source-index">[{index:02d}]</div>
+              <div class="dk-source-copy">
+                <strong>{escape(str(source.get("filename", "Unknown source")))}</strong>
+                <p>{escape(preview)}</p>
+              </div>
+              <span class="dk-page-chip">PAGE {int(source.get("page_number", 0))}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        label = f"Expand {source.get('chunk_reference', f'source_{index}')}"
+        with st.expander(label, expanded=default_expanded):
+            st.markdown(
+                f'<div class="dk-source-text">{escape(preview)}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                f"Document {source.get('document_id')} · "
+                f"Chunk {source.get('chunk_index')} · "
+                f"Distance {source.get('distance')}"
+            )
 
 
-def render_chat(corpora: list[dict[str, object]]) -> None:
-    selected_corpus = get_selected_corpus(corpora)
-
-    st.title("Corpus Chat")
-
-    if not selected_corpus:
-        st.info("Create a corpus before using the chat preview.")
+def render_chat(corpora: list[dict[str, Any]]) -> None:
+    corpus = selected_corpus(corpora)
+    if corpus is None:
+        page_header("Research interface", "Corpus Chat", "Ask grounded questions.")
+        empty_state("No active corpus", "Create and index a corpus before starting research.")
         return
 
-    st.caption(
-        f"Ask questions about {selected_corpus['name']}."
+    page_header(
+        "Research interface / Grounded mode",
+        f"Chat with {corpus['name']}",
+        "Answers are constrained to retrieved corpus evidence and include page-level citations.",
     )
 
-    with st.container(border=True):
-        st.write(f"Active corpus: **{selected_corpus['name']}**")
-        st.write(str(selected_corpus["description"]))
-        st.caption(f"Documents: {selected_corpus['document_count']}")
-
     try:
-        with st.spinner("Loading chat history..."):
-            messages = fetch_chat_history(int(selected_corpus["id"]))
+        messages = fetch_history(int(corpus["id"]), limit=50)
     except requests.RequestException as error:
         render_api_error(error)
         messages = []
 
     if not messages:
-        messages = [
-            {
-                "role": "assistant",
-                "content": "Ask a question about the selected corpus.",
-                "citations": [],
-                "created_at": None,
-            }
-        ]
+        with st.chat_message("assistant"):
+            st.write(
+                "The corpus is connected. Ask a question and I’ll retrieve the "
+                "most relevant source chunks before answering."
+            )
 
     for message in messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
             if message.get("created_at"):
-                st.caption(f"Sent: {message['created_at']}")
-            if message["role"] == "assistant" and message.get("citations"):
-                render_citations(message["citations"])
+                st.caption(format_datetime(message["created_at"], "%d %b · %H:%M"))
+            if message["role"] == "assistant":
+                render_citations(message.get("citations", []))
 
-    question = st.chat_input("Ask a question about this corpus")
+    question = st.chat_input(f"Query {corpus['name']}…")
     if question:
         try:
-            with st.spinner("Retrieving sources and generating answer..."):
-                answer_question(int(selected_corpus["id"]), question)
+            with st.spinner("Retrieving evidence and synthesizing answer..."):
+                answer_question(int(corpus["id"]), question)
             st.rerun()
         except requests.RequestException as error:
             render_api_error(error)
 
 
-def render_citations(sources: list[dict[str, object]]) -> None:
-    st.caption("Citations")
-    for source in sources:
-        citation = (
-            f"{source['filename']} | page {source['page_number']} | "
-            f"{source['chunk_reference']}"
-        )
-        st.markdown(f"- `{citation}`")
+def format_datetime(value: Any, pattern: str = "%d %b %Y · %H:%M") -> str:
+    if not value:
+        return "Unknown time"
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.strftime(pattern)
+    except ValueError:
+        return str(value)
 
-    with st.expander("View retrieved sources"):
-        for source in sources:
+
+def build_conversations(
+    messages: list[dict[str, Any]],
+    corpora: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    corpus_names = {int(corpus["id"]): str(corpus["name"]) for corpus in corpora}
+    conversations: list[dict[str, Any]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message["role"] != "user":
+            index += 1
+            continue
+        assistant = (
+            messages[index + 1]
+            if index + 1 < len(messages)
+            and messages[index + 1]["role"] == "assistant"
+            and messages[index + 1]["corpus_id"] == message["corpus_id"]
+            else None
+        )
+        conversations.append(
+            {
+                "corpus_id": int(message["corpus_id"]),
+                "corpus_name": corpus_names.get(
+                    int(message["corpus_id"]),
+                    f"Corpus {message['corpus_id']}",
+                ),
+                "question": str(message["content"]),
+                "answer": str(assistant["content"]) if assistant else "",
+                "created_at": message.get("created_at"),
+                "messages": 2 if assistant else 1,
+            }
+        )
+        index += 2 if assistant else 1
+    return list(reversed(conversations))
+
+
+def render_history(corpora: list[dict[str, Any]]) -> None:
+    page_header(
+        "Chat archive",
+        "Previous Conversations",
+        "Search prior research threads and return to the relevant corpus context.",
+    )
+    try:
+        messages = fetch_history(limit=50)
+    except requests.RequestException as error:
+        render_api_error(error)
+        return
+
+    conversations = build_conversations(messages, corpora)
+    search_col, filter_col = st.columns([1.6, 0.7])
+    with search_col:
+        search = st.text_input(
+            "Search conversations",
+            placeholder="Search questions, answers, or corpus names…",
+        )
+    with filter_col:
+        options: list[Any] = ["All corpora"] + [corpus["id"] for corpus in corpora]
+        corpus_filter = st.selectbox(
+            "Filter by corpus",
+            options,
+            format_func=lambda value: (
+                value
+                if value == "All corpora"
+                else next(c["name"] for c in corpora if c["id"] == value)
+            ),
+        )
+
+    filtered = conversations
+    if corpus_filter != "All corpora":
+        filtered = [
+            item for item in filtered if item["corpus_id"] == int(corpus_filter)
+        ]
+    if search.strip():
+        needle = search.strip().lower()
+        filtered = [
+            item
+            for item in filtered
+            if needle
+            in " ".join(
+                [item["corpus_name"], item["question"], item["answer"]]
+            ).lower()
+        ]
+
+    metric_grid(
+        [
+            ("Conversation turns", str(len(conversations)), "Available in recent history", "primary"),
+            ("Matching results", str(len(filtered)), "Current search and filter", None),
+            ("Corpora represented", str(len({c["corpus_id"] for c in conversations})), "Research contexts", None),
+            ("Archive state", "Synced", "Backed by chat history", "success"),
+        ]
+    )
+
+    section_title("Conversation index", f"{len(filtered)} results")
+    if not filtered:
+        empty_state("No conversations found", "Adjust the search or corpus filter.", "⌕")
+        return
+
+    for index, conversation in enumerate(filtered):
+        with st.container(border=True):
             st.markdown(
-                (
-                    f"**{source['filename']}**  \n"
-                    f"Page {source['page_number']} | "
-                    f"Chunk `{source['chunk_reference']}`"
-                )
+                f"""
+                <div class="dk-history-card">
+                  <div class="dk-history-card__top">
+                    <span class="dk-chip">{escape(conversation["corpus_name"])}</span>
+                    <h3>{escape(conversation["question"])}</h3>
+                    <time>{escape(format_datetime(conversation["created_at"], "%d %b · %H:%M"))}</time>
+                  </div>
+                  <p>{escape(conversation["answer"] or "Awaiting assistant response.")}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            st.write(source["text"])
-            st.divider()
+            st.button(
+                "Resume Conversation  →",
+                key=f"resume-{index}-{conversation['corpus_id']}",
+                on_click=queue_navigation,
+                args=("Corpus Chat", conversation["corpus_id"]),
+            )
 
 
-def render_settings(corpora: list[dict[str, object]]) -> None:
-    selected_corpus = get_selected_corpus(corpora)
+def render_settings(corpora: list[dict[str, Any]]) -> None:
+    user = st.session_state.get("current_user", {})
+    page_header(
+        "Account control",
+        "Settings",
+        "Manage operator identity, interface behavior, and session preferences.",
+    )
 
-    st.title("Corpus Settings")
-    if selected_corpus:
-        st.caption(f"Settings placeholder for {selected_corpus['name']}.")
-    else:
-        st.caption("Create a corpus to populate the database.")
-
-    with st.container(border=True):
-        st.subheader("Corpus Details")
-        st.text_input(
-            "Corpus name",
-            value=str(selected_corpus.get("name", "")),
-            disabled=True,
-        )
-        st.text_area(
-            "Description",
-            value=str(selected_corpus.get("description", "")),
-            disabled=True,
-        )
-        st.selectbox(
-            "Visibility",
-            options=["Private", "Team", "Organization"],
-            index=1,
-            disabled=True,
-        )
-        st.button("Save Settings", disabled=True)
-
-    with st.container(border=True):
-        st.subheader("Create Corpus")
-        st.caption("Creates a SQLite-backed corpus through the FastAPI backend.")
-
-        with st.form("create-corpus-form"):
-            name = st.text_input("Name", placeholder="Example corpus")
-            description = st.text_area("Description", placeholder="Short description")
-            submitted = st.form_submit_button("Create Corpus")
-
-        if submitted:
-            if not name.strip():
-                st.warning("Enter a corpus name before submitting.")
-            else:
+    profile, preferences = st.columns(2, gap="large")
+    with profile:
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Profile</div>', unsafe_allow_html=True)
+            st.subheader("Operator identity")
+            st.caption("Identity attached to private corpora and chat history.")
+            with st.form("profile-form"):
+                display_name = st.text_input(
+                    "Display name",
+                    value=str(user.get("display_name", "")),
+                )
+                st.text_input(
+                    "Corporate email",
+                    value=str(user.get("email", "")),
+                    disabled=True,
+                )
+                submitted = st.form_submit_button(
+                    "Save Profile",
+                    type="primary",
+                    use_container_width=True,
+                )
+            if submitted:
                 try:
-                    with st.spinner("Creating corpus..."):
-                        created = create_corpus(name.strip(), description.strip())
-                    queue_selected_corpus(created["id"])
-                    st.success(f"Created corpus: {created['name']}")
-                    st.json(created)
+                    updated = update_profile(display_name.strip())
+                    st.session_state.current_user = updated
+                    st.success("Operator profile updated.")
                     st.rerun()
                 except requests.RequestException as error:
                     render_api_error(error)
 
-    with st.container(border=True):
-        st.subheader("Delete Corpus")
-        if selected_corpus:
-            st.caption(f"Selected corpus ID: {selected_corpus['id']}")
-            if st.button("Delete Selected Corpus", type="secondary"):
-                try:
-                    with st.spinner("Deleting corpus..."):
-                        delete_corpus(int(selected_corpus["id"]))
-                    remaining = [
-                        corpus for corpus in corpora if corpus["id"] != selected_corpus["id"]
-                    ]
-                    if remaining:
-                        queue_selected_corpus(remaining[0]["id"])
-                    else:
-                        queue_selected_corpus(None)
-                    st.success(f"Deleted corpus: {selected_corpus['name']}")
-                    st.rerun()
-                except requests.RequestException as error:
-                    render_api_error(error)
-        else:
-            st.info("No corpus is selected.")
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Security</div>', unsafe_allow_html=True)
+            st.subheader("Session controls")
+            st.markdown(
+                f"""
+                <div style="display:grid;gap:.7rem;margin:.7rem 0 1rem">
+                  <div style="display:flex;justify-content:space-between">
+                    <span style="color:#918fa1">API connection</span>
+                    {status_badge("Connected")}
+                  </div>
+                  <div style="display:flex;justify-content:space-between;gap:1rem">
+                    <span style="color:#918fa1">Endpoint</span>
+                    <code style="color:#c3c0ff;overflow:hidden;text-overflow:ellipsis">{escape(API_BASE_URL)}</code>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("End Current Session", use_container_width=True):
+                clear_auth_session()
+                st.rerun()
 
-    st.info("Settings controls are placeholders. Corpus create/delete calls the backend.")
+    with preferences:
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Interface</div>', unsafe_allow_html=True)
+            st.subheader("Research preferences")
+            st.caption("Preferences apply immediately to this browser session.")
+            st.toggle(
+                "Expand citations by default",
+                key="expanded_citations",
+                help="Open retrieved source text beneath every answer.",
+            )
+            st.toggle(
+                "Comfortable information density",
+                key="comfortable_density",
+                help="Reserve more breathing room around long-form content.",
+            )
+            st.toggle(
+                "Reduce interface motion",
+                key="reduce_motion",
+                help="Minimize decorative transitions and status animation.",
+            )
+            st.selectbox(
+                "Default workspace",
+                ["Corpus Dashboard", "Corpus Chat", "Chat History"],
+                key="default_workspace",
+            )
+
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Workspace data</div>', unsafe_allow_html=True)
+            st.subheader("Corpus footprint")
+            st.caption("Account-scoped resources visible to the current operator.")
+            metric_grid(
+                [
+                    ("Corpora", str(len(corpora)), "Private workspaces", "primary"),
+                    (
+                        "Documents",
+                        str(sum(int(c["document_count"]) for c in corpora)),
+                        "Indexed sources",
+                        "success",
+                    ),
+                ]
+            )
+
+            corpus = selected_corpus(corpora)
+            if corpus:
+                st.markdown(
+                    f"""
+                    <div style="padding:.75rem;border-radius:8px;background:#010f1f">
+                      <div class="dk-label">Danger zone</div>
+                      <p style="font-size:12px;margin:.4rem 0 .8rem">
+                        Permanently remove <strong>{escape(str(corpus["name"]))}</strong>,
+                        its documents, chat messages, and vector collection.
+                      </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                confirm = st.checkbox(
+                    f"I understand that deleting {corpus['name']} cannot be undone",
+                    key=f"confirm-delete-{corpus['id']}",
+                )
+                if st.button(
+                    "Delete Active Corpus",
+                    disabled=not confirm,
+                    use_container_width=True,
+                ):
+                    try:
+                        delete_corpus(int(corpus["id"]))
+                        st.session_state.pop("selected_corpus_id", None)
+                        queue_navigation("Corpus Dashboard")
+                        st.rerun()
+                    except requests.RequestException as error:
+                        render_api_error(error)
 
 
 if "access_token" not in st.session_state:
@@ -517,25 +970,25 @@ if "access_token" not in st.session_state:
     st.stop()
 
 try:
-    corpora, history = load_backend_data()
+    corpora = fetch_corpora()
 except requests.RequestException as error:
-    st.title("Domain Knowledge Copilot")
     if isinstance(error, requests.HTTPError) and error.response is not None:
         if error.response.status_code == 401:
             clear_auth_session()
-            st.warning("Your session expired. Please sign in again.")
-            render_auth_page()
-            st.stop()
+            st.rerun()
     render_api_error(error)
     st.stop()
 
-apply_pending_selected_corpus(corpora)
-
+apply_pending_navigation(corpora)
 page = render_sidebar(corpora)
 
-if page == "Dashboard":
-    render_dashboard(corpora, history)
+if page == "Corpus Dashboard":
+    render_dashboard(corpora)
+elif page == "Corpus Detail":
+    render_corpus_detail(corpora)
 elif page == "Corpus Chat":
     render_chat(corpora)
+elif page == "Chat History":
+    render_history(corpora)
 else:
     render_settings(corpora)

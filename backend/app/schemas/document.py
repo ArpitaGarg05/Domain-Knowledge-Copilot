@@ -16,6 +16,21 @@ class DocumentResponse(BaseModel):
     embedding_count: int
 
 
+class DocumentSummaryResponse(DocumentResponse):
+    file_size_bytes: int
+    indexing_status: str
+
+
+class CorpusDocumentListResponse(BaseModel):
+    corpus_id: int
+    documents: list[DocumentSummaryResponse]
+    total_documents: int
+    total_pages: int
+    total_chunks: int
+    total_embeddings: int
+    total_storage_bytes: int
+
+
 class DocumentPageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

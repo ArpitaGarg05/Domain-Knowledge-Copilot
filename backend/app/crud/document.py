@@ -1,9 +1,19 @@
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.document import ChunkEmbedding, Document, DocumentChunk, DocumentPage
 from app.services.chunk_service import TextChunk
 from app.services.embedding_service import EmbeddedChunk
 from app.services.pdf_processor import ExtractedPdfPage
+
+
+def list_documents(db: Session, corpus_id: int) -> list[Document]:
+    statement = (
+        select(Document)
+        .where(Document.corpus_id == corpus_id)
+        .order_by(Document.uploaded_at.desc(), Document.id.desc())
+    )
+    return list(db.scalars(statement))
 
 
 def create_document(

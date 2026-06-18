@@ -19,6 +19,7 @@ from app.models.user import User
 from app.schemas.auth import (
     TokenResponse,
     UserLoginRequest,
+    UserProfileUpdateRequest,
     UserRegisterRequest,
     UserResponse,
 )
@@ -27,7 +28,11 @@ from app.schemas.corpus import (
     CorpusDeleteResponse,
     CorpusResponse,
 )
-from app.schemas.document import DocumentResponse
+from app.schemas.document import (
+    CorpusDocumentListResponse,
+    DocumentResponse,
+    DocumentSummaryResponse,
+)
 from app.schemas.health import HealthResponse
 from app.schemas.history import ChatMessageResponse, HistoryResponse
 from app.schemas.search import (
@@ -97,6 +102,16 @@ def login_user(
     return build_token_response(user)
 
 
+@router.patch("/auth/profile", response_model=UserResponse)
+def update_profile(
+    request: UserProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> UserResponse:
+    user = user_crud.update_user_profile(db, current_user, request)
+    return UserResponse.model_validate(user)
+
+
 def build_corpus_response(corpus: Corpus) -> CorpusResponse:
     return CorpusResponse(
         id=corpus.id,
@@ -144,6 +159,67 @@ def delete_corpus(
 
     VectorStoreService().delete_collection(corpus_id)
     return CorpusDeleteResponse(id=corpus_id, deleted=True)
+
+
+def build_document_summary(document) -> DocumentSummaryResponse:
+    source_path = Path(document.source_path) if document.source_path else None
+    file_size_bytes = 0
+    if source_path is not None:
+        try:
+            file_size_bytes = source_path.stat().st_size
+        except OSError:
+            file_size_bytes = 0
+
+    if document.chunk_count == 0:
+        indexing_status = "empty"
+    elif document.embedding_count == document.chunk_count:
+        indexing_status = "indexed"
+    else:
+        indexing_status = "partial"
+
+    return DocumentSummaryResponse(
+        id=document.id,
+        corpus_id=document.corpus_id,
+        filename=document.filename,
+        source_path=document.source_path or "",
+        uploaded_at=document.uploaded_at,
+        page_count=document.page_count,
+        chunk_count=document.chunk_count,
+        embedding_count=document.embedding_count,
+        file_size_bytes=file_size_bytes,
+        indexing_status=indexing_status,
+    )
+
+
+@router.get(
+    "/corpora/{corpus_id}/documents",
+    response_model=CorpusDocumentListResponse,
+)
+def list_corpus_documents(
+    corpus_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CorpusDocumentListResponse:
+    corpus = corpus_crud.get_user_corpus(db, corpus_id, owner_id=current_user.id)
+    if corpus is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Corpus not found.",
+        )
+
+    documents = [
+        build_document_summary(document)
+        for document in document_crud.list_documents(db, corpus_id)
+    ]
+    return CorpusDocumentListResponse(
+        corpus_id=corpus_id,
+        documents=documents,
+        total_documents=len(documents),
+        total_pages=sum(document.page_count for document in documents),
+        total_chunks=sum(document.chunk_count for document in documents),
+        total_embeddings=sum(document.embedding_count for document in documents),
+        total_storage_bytes=sum(document.file_size_bytes for document in documents),
+    )
 
 
 @router.post(
