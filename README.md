@@ -165,6 +165,7 @@ Streamlit normally opens the application at `http://localhost:8501`.
 | `EMBEDDING_BACKEND` | No | `hash` | `hash` or `sentence-transformers` |
 | `EMBEDDING_MODEL` | No | `all-MiniLM-L6-v2` | Sentence Transformer model name |
 | `BACKEND_URL` | No | `http://localhost:8000` | Backend URL used by Streamlit |
+| `AUTH_COOKIE_SECURE` | Production | `false` | Restricts the persistent frontend auth cookie to HTTPS |
 
 The backend also creates two local persistence directories relative to its
 working directory:
@@ -185,6 +186,7 @@ All routes except the root, health checks, registration, and login require an
 | `GET` | `/health` | Health check |
 | `POST` | `/auth/register` | Create a user and return an access token |
 | `POST` | `/auth/login` | Authenticate and return an access token |
+| `GET` | `/auth/me` | Hydrate the current user from a valid bearer token |
 | `PATCH` | `/auth/profile` | Update the current user's display name |
 | `GET` | `/corpora` | List the current user's corpora |
 | `POST` | `/corpora` | Create a corpus |

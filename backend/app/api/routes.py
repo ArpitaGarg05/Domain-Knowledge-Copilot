@@ -102,6 +102,13 @@ def login_user(
     return build_token_response(user)
 
 
+@router.get("/auth/me", response_model=UserResponse)
+def get_authenticated_user(
+    current_user: User = Depends(get_current_user),
+) -> UserResponse:
+    return UserResponse.model_validate(current_user)
+
+
 @router.patch("/auth/profile", response_model=UserResponse)
 def update_profile(
     request: UserProfileUpdateRequest,

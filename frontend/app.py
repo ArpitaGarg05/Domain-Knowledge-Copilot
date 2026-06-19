@@ -1,8 +1,9 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from typing import Any, Optional
 
+import extra_streamlit_components as stx
 import requests
 import streamlit as st
 
@@ -26,6 +27,13 @@ st.set_page_config(
 inject_styles()
 
 API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+AUTH_COOKIE_NAME = "dkc_access_token"
+AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24
+AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 PAGES = [
     "Corpus Dashboard",
     "Corpus Detail",
@@ -37,6 +45,7 @@ st.session_state.setdefault("expanded_citations", False)
 st.session_state.setdefault("comfortable_density", True)
 st.session_state.setdefault("reduce_motion", False)
 st.session_state.setdefault("default_workspace", "Corpus Dashboard")
+cookie_manager = stx.CookieManager(key="auth_cookie_manager")
 
 
 def inject_preference_styles() -> None:
@@ -106,6 +115,10 @@ def login_user(email: str, password: str) -> dict[str, Any]:
     )
 
 
+def fetch_current_user() -> dict[str, Any]:
+    return request_json("GET", "/auth/me")
+
+
 def update_profile(display_name: str) -> dict[str, Any]:
     return request_json(
         "PATCH",
@@ -172,6 +185,7 @@ def answer_question(corpus_id: int, question: str) -> dict[str, Any]:
 def store_auth_session(auth_response: dict[str, Any]) -> None:
     st.session_state.access_token = auth_response["access_token"]
     st.session_state.current_user = auth_response["user"]
+    st.session_state.auth_cookie_action = "set"
     st.session_state.pending_page = st.session_state.get(
         "default_workspace",
         "Corpus Dashboard",
@@ -187,9 +201,63 @@ def clear_auth_session() -> None:
             "default_workspace",
             "Corpus Dashboard",
         ),
+        "auth_cookie_action": "delete",
     }
     st.session_state.clear()
     st.session_state.update(preserved)
+
+
+def process_auth_cookie_action() -> None:
+    action = st.session_state.pop("auth_cookie_action", None)
+    if action == "set":
+        token = st.session_state.get("access_token")
+        if token:
+            cookie_manager.set(
+                AUTH_COOKIE_NAME,
+                token,
+                key="persist_auth_cookie",
+                expires_at=datetime.now()
+                + timedelta(seconds=AUTH_COOKIE_MAX_AGE_SECONDS),
+                max_age=AUTH_COOKIE_MAX_AGE_SECONDS,
+                secure=AUTH_COOKIE_SECURE,
+                same_site="strict",
+            )
+    elif action == "delete" and cookie_manager.get(AUTH_COOKIE_NAME):
+        cookie_manager.delete(
+            AUTH_COOKIE_NAME,
+            key="delete_auth_cookie",
+        )
+
+
+def restore_auth_session() -> bool:
+    if st.session_state.get("access_token"):
+        if st.session_state.get("current_user"):
+            return True
+        try:
+            st.session_state.current_user = fetch_current_user()
+            return True
+        except requests.RequestException:
+            clear_auth_session()
+            process_auth_cookie_action()
+            return False
+
+    persisted_token = cookie_manager.get(AUTH_COOKIE_NAME)
+    if not persisted_token:
+        return False
+
+    st.session_state.access_token = persisted_token
+    try:
+        st.session_state.current_user = fetch_current_user()
+        return True
+    except requests.RequestException:
+        clear_auth_session()
+        process_auth_cookie_action()
+        return False
+
+
+def require_authenticated_user() -> bool:
+    process_auth_cookie_action()
+    return restore_auth_session()
 
 
 def queue_navigation(page: str, corpus_id: Optional[int] = None) -> None:
@@ -965,7 +1033,7 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
                         render_api_error(error)
 
 
-if "access_token" not in st.session_state:
+if not require_authenticated_user():
     render_auth_page()
     st.stop()
 
