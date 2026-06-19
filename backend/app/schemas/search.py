@@ -23,10 +23,11 @@ class RetrievedChunkResponse(BaseModel):
 
 
 class AnswerRequest(SearchRequest):
-    pass
+    conversation_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class AnswerResponse(BaseModel):
+    conversation_id: str
     answer: str
     sources: list[RetrievedChunkResponse]
     created_at: Optional[datetime] = None

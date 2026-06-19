@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime, timedelta
 from html import escape
 from typing import Any, Optional
@@ -28,6 +29,7 @@ inject_styles()
 
 API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 AUTH_COOKIE_NAME = "dkc_access_token"
+AUTH_LOGGED_OUT_VALUE = "__logged_out__"
 AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24
 AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "").lower() in {
     "1",
@@ -41,10 +43,10 @@ PAGES = [
     "Chat History",
     "Settings",
 ]
-st.session_state.setdefault("expanded_citations", False)
 st.session_state.setdefault("comfortable_density", True)
 st.session_state.setdefault("reduce_motion", False)
 st.session_state.setdefault("default_workspace", "Corpus Dashboard")
+st.session_state.setdefault("auth_tab", "Login")
 cookie_manager = stx.CookieManager(key="auth_cookie_manager")
 
 
@@ -133,11 +135,14 @@ def fetch_corpora() -> list[dict[str, Any]]:
 
 def fetch_history(
     corpus_id: Optional[int] = None,
+    conversation_id: Optional[str] = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     params: dict[str, Any] = {"limit": limit}
     if corpus_id is not None:
         params["corpus_id"] = corpus_id
+    if conversation_id is not None:
+        params["conversation_id"] = conversation_id
     return request_json("GET", "/history", params=params)["messages"]
 
 
@@ -173,11 +178,20 @@ def upload_pdf(corpus_id: int, uploaded_file: Any) -> dict[str, Any]:
     )
 
 
-def answer_question(corpus_id: int, question: str) -> dict[str, Any]:
+def answer_question(
+    corpus_id: int,
+    question: str,
+    conversation_id: Optional[str] = None,
+) -> dict[str, Any]:
     return request_json(
         "POST",
         "/answer",
-        json={"corpus_id": corpus_id, "question": question, "limit": 5},
+        json={
+            "corpus_id": corpus_id,
+            "question": question,
+            "limit": 5,
+            "conversation_id": conversation_id,
+        },
         timeout=60,
     )
 
@@ -185,7 +199,9 @@ def answer_question(corpus_id: int, question: str) -> dict[str, Any]:
 def store_auth_session(auth_response: dict[str, Any]) -> None:
     st.session_state.access_token = auth_response["access_token"]
     st.session_state.current_user = auth_response["user"]
+    st.session_state.logout_in_progress = False
     st.session_state.auth_cookie_action = "set"
+    st.session_state.auth_validation_complete = True
     st.session_state.pending_page = st.session_state.get(
         "default_workspace",
         "Corpus Dashboard",
@@ -195,13 +211,14 @@ def store_auth_session(auth_response: dict[str, Any]) -> None:
 def clear_auth_session() -> None:
     preserved = {
         "reduce_motion": st.session_state.get("reduce_motion", False),
-        "expanded_citations": st.session_state.get("expanded_citations", False),
         "comfortable_density": st.session_state.get("comfortable_density", True),
         "default_workspace": st.session_state.get(
             "default_workspace",
             "Corpus Dashboard",
         ),
         "auth_cookie_action": "delete",
+        "auth_validation_complete": True,
+        "logout_in_progress": True,
     }
     st.session_state.clear()
     st.session_state.update(preserved)
@@ -222,14 +239,25 @@ def process_auth_cookie_action() -> None:
                 secure=AUTH_COOKIE_SECURE,
                 same_site="strict",
             )
-    elif action == "delete" and cookie_manager.get(AUTH_COOKIE_NAME):
-        cookie_manager.delete(
+    elif action == "delete":
+        cookie_manager.set(
             AUTH_COOKIE_NAME,
-            key="delete_auth_cookie",
+            AUTH_LOGGED_OUT_VALUE,
+            key="clear_auth_cookie",
+            expires_at=datetime.now()
+            + timedelta(seconds=AUTH_COOKIE_MAX_AGE_SECONDS),
+            max_age=AUTH_COOKIE_MAX_AGE_SECONDS,
+            secure=AUTH_COOKIE_SECURE,
+            same_site="strict",
         )
 
 
 def restore_auth_session() -> bool:
+    if st.session_state.get("logout_in_progress"):
+        if cookie_manager.get(AUTH_COOKIE_NAME) == AUTH_LOGGED_OUT_VALUE:
+            st.session_state.logout_in_progress = False
+        return False
+
     if st.session_state.get("access_token"):
         if st.session_state.get("current_user"):
             return True
@@ -242,12 +270,13 @@ def restore_auth_session() -> bool:
             return False
 
     persisted_token = cookie_manager.get(AUTH_COOKIE_NAME)
-    if not persisted_token:
+    if not persisted_token or persisted_token == AUTH_LOGGED_OUT_VALUE:
         return False
 
     st.session_state.access_token = persisted_token
     try:
         st.session_state.current_user = fetch_current_user()
+        st.session_state.pending_page = "Corpus Dashboard"
         return True
     except requests.RequestException:
         clear_auth_session()
@@ -255,15 +284,52 @@ def restore_auth_session() -> bool:
         return False
 
 
-def require_authenticated_user() -> bool:
+def render_auth_loading() -> None:
+    st.markdown(
+        """
+        <div class="dk-auth-loading">
+          <div class="dk-auth-loading__mark">◇</div>
+          <h2>Restoring secure session</h2>
+          <p>Validating identity · Hydrating workspace</p>
+          <div class="dk-auth-loading__bar"></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def require_authenticated_user() -> Optional[bool]:
     process_auth_cookie_action()
-    return restore_auth_session()
+    if st.session_state.get("access_token"):
+        st.session_state.auth_validation_complete = True
+        return restore_auth_session()
+
+    persisted_token = cookie_manager.get(AUTH_COOKIE_NAME)
+    if persisted_token and persisted_token != AUTH_LOGGED_OUT_VALUE:
+        st.session_state.auth_validation_complete = True
+        return restore_auth_session()
+
+    attempts = int(st.session_state.get("auth_validation_attempts", 0))
+    if not st.session_state.get("auth_validation_complete") and attempts < 2:
+        st.session_state.auth_validation_attempts = attempts + 1
+        render_auth_loading()
+        time.sleep(0.4)
+        st.rerun()
+
+    st.session_state.auth_validation_complete = True
+    return False
 
 
-def queue_navigation(page: str, corpus_id: Optional[int] = None) -> None:
+def queue_navigation(
+    page: str,
+    corpus_id: Optional[int] = None,
+    conversation_id: Optional[str] = None,
+) -> None:
     st.session_state.pending_page = page
     if corpus_id is not None:
         st.session_state.pending_selected_corpus_id = corpus_id
+    if conversation_id is not None:
+        st.session_state.pending_conversation_id = conversation_id
 
 
 def apply_pending_navigation(corpora: list[dict[str, Any]]) -> None:
@@ -274,6 +340,11 @@ def apply_pending_navigation(corpora: list[dict[str, Any]]) -> None:
         pending = st.session_state.pop("pending_selected_corpus_id")
         if any(str(corpus["id"]) == str(pending) for corpus in corpora):
             st.session_state.selected_corpus_id = pending
+
+    if "pending_conversation_id" in st.session_state:
+        st.session_state.active_conversation_id = st.session_state.pop(
+            "pending_conversation_id"
+        )
 
     valid_ids = {str(corpus["id"]) for corpus in corpora}
     current = st.session_state.get("selected_corpus_id")
@@ -307,6 +378,10 @@ def render_api_error(error: requests.RequestException) -> None:
     st.error(detail)
 
 
+def set_auth_tab(tab: str) -> None:
+    st.session_state.auth_tab = tab
+
+
 def render_auth_page() -> None:
     st.markdown(
         """
@@ -322,23 +397,28 @@ def render_auth_page() -> None:
     with center:
         with st.container(key="auth_card"):
             st.markdown('<div class="dk-auth-marker"></div>', unsafe_allow_html=True)
-            login_tab, register_tab = st.tabs(["System Access", "Create Account"])
+            auth_tab = st.segmented_control(
+                "Authentication",
+                ["Login", "Sign-Up"],
+                key="auth_tab",
+                label_visibility="collapsed",
+                width="stretch",
+            )
 
-            with login_tab:
-                st.subheader("Initialize Session")
+            if auth_tab == "Login":
                 st.caption("Authenticate to enter the research environment.")
                 with st.form("login-form"):
                     email = st.text_input(
-                        "Corporate email",
+                        "Email",
                         placeholder="name@corporation.com",
                     )
                     password = st.text_input(
-                        "Access key",
+                        "Password",
                         type="password",
                         placeholder="••••••••••••",
                     )
                     submitted = st.form_submit_button(
-                        "Initialize Session  →",
+                        "Login",
                         type="primary",
                         use_container_width=True,
                     )
@@ -350,28 +430,34 @@ def render_auth_page() -> None:
                         st.rerun()
                     except requests.RequestException as error:
                         render_api_error(error)
+                st.button(
+                    "Don't have an account? Register",
+                    key="auth_show_signup",
+                    use_container_width=True,
+                    on_click=set_auth_tab,
+                    args=("Sign-Up",),
+                )
 
-            with register_tab:
-                st.subheader("Create Account")
+            else:
                 st.caption("Initialize your secure research environment.")
                 with st.form("register-form"):
                     display_name = st.text_input(
-                        "Operator name",
+                        "User name",
                         placeholder="Full name",
                     )
                     email = st.text_input(
-                        "Corporate email",
+                        "User email",
                         placeholder="name@organization.ai",
                         key="register_email",
                     )
                     password = st.text_input(
-                        "Access key",
+                        "Password",
                         type="password",
                         placeholder="Minimum 8 characters",
                         key="register_password",
                     )
                     submitted = st.form_submit_button(
-                        "Register  →",
+                        "Register",
                         type="primary",
                         use_container_width=True,
                     )
@@ -387,6 +473,13 @@ def render_auth_page() -> None:
                         st.rerun()
                     except requests.RequestException as error:
                         render_api_error(error)
+                st.button(
+                    "Already have an account? Login",
+                    key="auth_show_login",
+                    use_container_width=True,
+                    on_click=set_auth_tab,
+                    args=("Login",),
+                )
 
     st.markdown(
         """
@@ -397,6 +490,15 @@ def render_auth_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def handle_workspace_change() -> None:
+    if st.session_state.get("active_page") == "Corpus Chat":
+        st.session_state.pop("active_conversation_id", None)
+
+
+def handle_corpus_change() -> None:
+    st.session_state.pop("active_conversation_id", None)
 
 
 def render_sidebar(corpora: list[dict[str, Any]]) -> str:
@@ -425,6 +527,7 @@ def render_sidebar(corpora: list[dict[str, Any]]) -> str:
             PAGES,
             key="active_page",
             label_visibility="collapsed",
+            on_change=handle_workspace_change,
         )
 
         if corpora:
@@ -442,6 +545,7 @@ def render_sidebar(corpora: list[dict[str, Any]]) -> str:
                 ),
                 key="selected_corpus_id",
                 label_visibility="collapsed",
+                on_change=handle_corpus_change,
             )
 
         user = st.session_state.get("current_user", {})
@@ -492,11 +596,11 @@ def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
         )
 
 
-def render_create_corpus() -> None:
+def render_create_corpus(form_key: str) -> None:
     with st.container(border=True):
         st.markdown('<div class="dk-label">Provision corpus</div>', unsafe_allow_html=True)
         st.subheader("Create a knowledge workspace")
-        with st.form("create-corpus-form", clear_on_submit=True):
+        with st.form(form_key, clear_on_submit=True):
             name = st.text_input("Corpus name", placeholder="Research intelligence")
             description = st.text_area(
                 "Description",
@@ -535,13 +639,11 @@ def render_dashboard(corpora: list[dict[str, Any]]) -> None:
                 "Across all corpora",
                 "success",
             ),
-            ("Retrieval mode", "RAG", "Grounded source answers", None),
-            ("System state", "Online", API_BASE_URL, "success"),
         ]
     )
 
     if st.session_state.get("show_create_corpus", False) or not corpora:
-        render_create_corpus()
+        render_create_corpus("create-corpus-primary-form")
 
     section_title("Knowledge corpora", f"{len(corpora)} workspaces")
     if not corpora:
@@ -558,7 +660,7 @@ def render_dashboard(corpora: list[dict[str, Any]]) -> None:
             render_corpus_card(corpus, index)
 
     with st.expander("Create another corpus"):
-        render_create_corpus()
+        render_create_corpus("create-corpus-secondary-form")
 
 
 def document_row(document: dict[str, Any]) -> None:
@@ -570,7 +672,7 @@ def document_row(document: dict[str, Any]) -> None:
           <div class="dk-document__name">
             <div class="dk-file-icon">PDF</div>
             <div>
-              <strong>{escape(str(document["filename"]))}</strong>
+              <strong title="{escape(str(document["filename"]))}">{escape(str(document["filename"]))}</strong>
               <small>Uploaded {escape(uploaded)}</small>
             </div>
           </div>
@@ -696,32 +798,28 @@ def render_citations(sources: list[dict[str, Any]]) -> None:
         """,
         unsafe_allow_html=True,
     )
-    default_expanded = bool(st.session_state.get("expanded_citations", False))
     for index, source in enumerate(sources, start=1):
-        preview = str(source.get("text", "")).strip()
-        st.markdown(
-            f"""
-            <div class="dk-source-head">
-              <div class="dk-source-index">[{index:02d}]</div>
-              <div class="dk-source-copy">
-                <strong>{escape(str(source.get("filename", "Unknown source")))}</strong>
-                <p>{escape(preview)}</p>
-              </div>
-              <span class="dk-page-chip">PAGE {int(source.get("page_number", 0))}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        label = f"Expand {source.get('chunk_reference', f'source_{index}')}"
-        with st.expander(label, expanded=default_expanded):
+        chunk_text = str(source.get("text", "")).strip()
+        label = f"Expand_chunk_{index:02d}"
+        with st.expander(label, expanded=False):
             st.markdown(
-                f'<div class="dk-source-text">{escape(preview)}</div>',
+                f"""
+                <div class="dk-source-head">
+                  <div class="dk-source-index">[{index:02d}]</div>
+                  <div class="dk-source-copy">
+                    <strong>{escape(str(source.get("filename", "Unknown source")))}</strong>
+                    <p>Retrieved source evidence</p>
+                  </div>
+                  <span class="dk-page-chip">PAGE {int(source.get("page_number", 0))}</span>
+                </div>
+                <div class="dk-source-text">{escape(chunk_text)}</div>
+                """,
                 unsafe_allow_html=True,
             )
             st.caption(
-                f"Document {source.get('document_id')} · "
-                f"Chunk {source.get('chunk_index')} · "
-                f"Distance {source.get('distance')}"
+                f"Source document: {source.get('filename', 'Unknown source')} · "
+                f"Page {source.get('page_number', 0)} · "
+                f"Chunk {source.get('chunk_reference', source.get('chunk_index'))}"
             )
 
 
@@ -738,11 +836,24 @@ def render_chat(corpora: list[dict[str, Any]]) -> None:
         "Answers are constrained to retrieved corpus evidence and include page-level citations.",
     )
 
-    try:
-        messages = fetch_history(int(corpus["id"]), limit=50)
-    except requests.RequestException as error:
-        render_api_error(error)
+    conversation_id = st.session_state.get("active_conversation_id")
+    if conversation_id:
+        try:
+            messages = fetch_history(
+                int(corpus["id"]),
+                conversation_id=conversation_id,
+                limit=50,
+            )
+        except requests.RequestException as error:
+            render_api_error(error)
+            messages = []
+    else:
         messages = []
+
+    if conversation_id:
+        if st.button("＋ Start New Conversation", key="start-new-conversation"):
+            st.session_state.pop("active_conversation_id", None)
+            st.rerun()
 
     if not messages:
         with st.chat_message("assistant"):
@@ -763,7 +874,12 @@ def render_chat(corpora: list[dict[str, Any]]) -> None:
     if question:
         try:
             with st.spinner("Retrieving evidence and synthesizing answer..."):
-                answer_question(int(corpus["id"]), question)
+                response = answer_question(
+                    int(corpus["id"]),
+                    question,
+                    conversation_id=conversation_id,
+                )
+            st.session_state.active_conversation_id = response["conversation_id"]
             st.rerun()
         except requests.RequestException as error:
             render_api_error(error)
@@ -784,35 +900,45 @@ def build_conversations(
     corpora: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     corpus_names = {int(corpus["id"]): str(corpus["name"]) for corpus in corpora}
-    conversations: list[dict[str, Any]] = []
-    index = 0
-    while index < len(messages):
-        message = messages[index]
-        if message["role"] != "user":
-            index += 1
-            continue
-        assistant = (
-            messages[index + 1]
-            if index + 1 < len(messages)
-            and messages[index + 1]["role"] == "assistant"
-            and messages[index + 1]["corpus_id"] == message["corpus_id"]
-            else None
-        )
-        conversations.append(
+    grouped: dict[str, dict[str, Any]] = {}
+    legacy_by_corpus: dict[int, str] = {}
+
+    for message in messages:
+        corpus_id = int(message["corpus_id"])
+        conversation_id = message.get("conversation_id")
+        if not conversation_id:
+            if message["role"] == "user" or corpus_id not in legacy_by_corpus:
+                legacy_by_corpus[corpus_id] = f"legacy-{message['id']}"
+            conversation_id = legacy_by_corpus[corpus_id]
+
+        conversation = grouped.setdefault(
+            str(conversation_id),
             {
-                "corpus_id": int(message["corpus_id"]),
+                "conversation_id": str(conversation_id),
+                "corpus_id": corpus_id,
                 "corpus_name": corpus_names.get(
-                    int(message["corpus_id"]),
-                    f"Corpus {message['corpus_id']}",
+                    corpus_id,
+                    f"Corpus {corpus_id}",
                 ),
-                "question": str(message["content"]),
-                "answer": str(assistant["content"]) if assistant else "",
+                "question": "",
+                "answer": "",
                 "created_at": message.get("created_at"),
-                "messages": 2 if assistant else 1,
-            }
+                "updated_at": message.get("created_at"),
+                "messages": 0,
+            },
         )
-        index += 2 if assistant else 1
-    return list(reversed(conversations))
+        conversation["messages"] += 1
+        conversation["updated_at"] = message.get("created_at")
+        if message["role"] == "user" and not conversation["question"]:
+            conversation["question"] = str(message["content"])
+        if message["role"] == "assistant":
+            conversation["answer"] = str(message["content"])
+
+    return sorted(
+        grouped.values(),
+        key=lambda item: str(item.get("updated_at") or ""),
+        reverse=True,
+    )
 
 
 def render_history(corpora: list[dict[str, Any]]) -> None:
@@ -893,9 +1019,13 @@ def render_history(corpora: list[dict[str, Any]]) -> None:
             )
             st.button(
                 "Resume Conversation  →",
-                key=f"resume-{index}-{conversation['corpus_id']}",
+                key=f"resume-{index}-{conversation['conversation_id']}",
                 on_click=queue_navigation,
-                args=("Corpus Chat", conversation["corpus_id"]),
+                args=(
+                    "Corpus Chat",
+                    conversation["corpus_id"],
+                    conversation["conversation_id"],
+                ),
             )
 
 
@@ -964,11 +1094,6 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
             st.markdown('<div class="dk-label">Interface</div>', unsafe_allow_html=True)
             st.subheader("Research preferences")
             st.caption("Preferences apply immediately to this browser session.")
-            st.toggle(
-                "Expand citations by default",
-                key="expanded_citations",
-                help="Open retrieved source text beneath every answer.",
-            )
             st.toggle(
                 "Comfortable information density",
                 key="comfortable_density",

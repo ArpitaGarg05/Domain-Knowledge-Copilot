@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
@@ -340,6 +340,7 @@ def build_chat_message_response(message: ChatMessage) -> ChatMessageResponse:
     return ChatMessageResponse(
         id=message.id,
         corpus_id=message.corpus_id,
+        conversation_id=message.conversation_id,
         role=message.role,
         content=message.content,
         citations=[
@@ -367,6 +368,15 @@ def answer_question(
             detail="Corpus not found.",
         )
 
+    conversation_id = request.conversation_id or uuid4().hex
+    try:
+        UUID(conversation_id)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="conversation_id must be a valid UUID.",
+        ) from error
+
     retrieved_chunks = VectorStoreService().retrieve_by_text(
         corpus_id=request.corpus_id,
         query_text=request.question,
@@ -377,6 +387,7 @@ def answer_question(
         db,
         user_id=current_user.id,
         corpus_id=request.corpus_id,
+        conversation_id=conversation_id,
         limit=5,
     )
 
@@ -401,12 +412,14 @@ def answer_question(
         db=db,
         corpus_id=request.corpus_id,
         user_id=current_user.id,
+        conversation_id=conversation_id,
         question=request.question,
         answer=generated.answer,
         citations=sources,
     )
 
     return AnswerResponse(
+        conversation_id=conversation_id,
         answer=generated.answer,
         sources=sources,
         created_at=answer_message.created_at,
@@ -416,6 +429,7 @@ def answer_question(
 @router.get("/history", response_model=HistoryResponse)
 def get_history(
     corpus_id: Optional[int] = Query(default=None),
+    conversation_id: Optional[str] = Query(default=None),
     limit: int = Query(default=5, ge=1, le=50),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -432,6 +446,7 @@ def get_history(
         db,
         user_id=current_user.id,
         corpus_id=corpus_id,
+        conversation_id=conversation_id,
         limit=limit,
     )
     return HistoryResponse(

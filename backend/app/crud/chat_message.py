@@ -12,6 +12,7 @@ def list_chat_messages(
     db: Session,
     user_id: int,
     corpus_id: Optional[int] = None,
+    conversation_id: Optional[str] = None,
     limit: int = 5,
 ) -> list[ChatMessage]:
     statement = (
@@ -21,6 +22,8 @@ def list_chat_messages(
     )
     if corpus_id is not None:
         statement = statement.where(ChatMessage.corpus_id == corpus_id)
+    if conversation_id is not None:
+        statement = statement.where(ChatMessage.conversation_id == conversation_id)
 
     messages = list(db.scalars(statement.limit(limit)))
     return list(reversed(messages))
@@ -30,6 +33,7 @@ def create_chat_turn(
     db: Session,
     corpus_id: int,
     user_id: int,
+    conversation_id: str,
     question: str,
     answer: str,
     citations: list[RetrievedChunkResponse],
@@ -37,6 +41,7 @@ def create_chat_turn(
     question_message = ChatMessage(
         corpus_id=corpus_id,
         user_id=user_id,
+        conversation_id=conversation_id,
         role="user",
         content=question,
         citations="[]",
@@ -44,6 +49,7 @@ def create_chat_turn(
     answer_message = ChatMessage(
         corpus_id=corpus_id,
         user_id=user_id,
+        conversation_id=conversation_id,
         role="assistant",
         content=answer,
         citations=json.dumps([citation.model_dump() for citation in citations]),
