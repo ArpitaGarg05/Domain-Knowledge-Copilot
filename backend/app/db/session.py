@@ -12,8 +12,6 @@ if settings.database_url.startswith("sqlite"):
         "check_same_thread": False
     }
 
-print("DATABASE_URL =", settings.database_url)
-
 engine = create_engine(
     settings.database_url,
     **engine_kwargs,
