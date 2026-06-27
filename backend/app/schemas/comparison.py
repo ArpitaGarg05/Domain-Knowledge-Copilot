@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,9 +43,40 @@ class ComparisonListResponse(BaseModel):
     comparisons: list[ComparisonListItemResponse]
 
 
+class ComparisonAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+class ReferencedSectionResponse(BaseModel):
+    document_id: int
+    filename: str
+    page_number: int
+    chunk_reference: str
+    text: str
+
+
+class ComparisonQuestionResponse(BaseModel):
+    id: int
+    question: str
+    answer: str
+    supporting_documents: list[str]
+    referenced_sections: list[ReferencedSectionResponse]
+    confidence: str
+    created_at: Optional[datetime] = None
+
+
+class ComparisonAskResponse(BaseModel):
+    answer: str
+    supporting_documents: list[str]
+    referenced_sections: list[ReferencedSectionResponse]
+    confidence: str
+    created_at: Optional[datetime] = None
+
+
 class ComparisonDetailResponse(ComparisonCreateResponse):
     id: int
     title: str
     documents: list[ComparedDocumentResponse]
     comparison_json: dict[str, Any]
+    questions: list[ComparisonQuestionResponse] = Field(default_factory=list)
     created_at: datetime

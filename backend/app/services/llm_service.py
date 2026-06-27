@@ -137,6 +137,45 @@ class LLMService:
         comparison = response.choices[0].message.content or ""
         return comparison.strip()
 
+    def generate_comparison_answer(
+        self,
+        question: str,
+        grouped_context: dict[str, list[RetrievalResult]],
+    ) -> str:
+        if not self.api_key:
+            raise LLMConfigurationError("GROQ_API_KEY is not configured.")
+
+        client = Groq(api_key=self.api_key)
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are comparing multiple academic documents. Never "
+                            "answer outside the retrieved context. For every "
+                            "statement, identify which document supports it. If a "
+                            "concept exists only in one document, mention it. "
+                            "Return JSON only."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": self.build_comparison_answer_prompt(
+                            question=question,
+                            grouped_context=grouped_context,
+                        ),
+                    },
+                ],
+                temperature=0.1,
+            )
+        except GroqError as error:
+            raise LLMGenerationError(str(error)) from error
+
+        answer = response.choices[0].message.content or ""
+        return answer.strip()
+
     def build_comparison_prompt(self, summary_blocks: str) -> str:
         return (
             "Compare the following document summaries.\n\n"
@@ -160,6 +199,48 @@ class LLMService:
             '  "beginner_document": "string",\n'
             '  "most_comprehensive_document": "string",\n'
             '  "recommendation": "string"\n'
+            "}"
+        )
+
+    def build_comparison_answer_prompt(
+        self,
+        question: str,
+        grouped_context: dict[str, list[RetrievalResult]],
+    ) -> str:
+        document_sections = []
+        for label, chunks in grouped_context.items():
+            chunk_lines = "\n\n".join(
+                (
+                    f"Section {index} "
+                    f"(document={chunk.filename}, page={chunk.page_number}, "
+                    f"chunk_ref={chunk.chunk_reference}):\n{chunk.text}"
+                )
+                for index, chunk in enumerate(chunks, start=1)
+            )
+            document_sections.append(
+                f"{label}\n{chunk_lines if chunk_lines else 'No retrieved context.'}"
+            )
+
+        return (
+            "Question:\n"
+            f"{question}\n\n"
+            "Retrieved context grouped by document:\n"
+            f"{chr(10).join(document_sections)}\n\n"
+            "Use this structure in the answer text:\n"
+            "Summary\n"
+            "Document A\n"
+            "Document B\n"
+            "Document C if present\n"
+            "Final Comparison\n\n"
+            "Return JSON ONLY with this shape:\n"
+            "{\n"
+            '  "answer": "structured answer text",\n'
+            '  "supporting_documents": ["Document filename"],\n'
+            '  "referenced_sections": [\n'
+            '    {"filename": "Document filename", "page_number": 1, '
+            '"chunk_reference": "chunk_1"}\n'
+            "  ],\n"
+            '  "confidence": "high|medium|low"\n'
             "}"
         )
 

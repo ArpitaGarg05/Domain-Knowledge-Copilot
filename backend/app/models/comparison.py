@@ -26,6 +26,12 @@ class Comparison(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    questions = relationship(
+        "ComparisonQuestion",
+        back_populates="comparison",
+        cascade="all, delete-orphan",
+        order_by="ComparisonQuestion.created_at",
+    )
 
 
 class ComparisonDocument(Base):
@@ -56,3 +62,21 @@ class ComparisonResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     comparison = relationship("Comparison", back_populates="result")
+
+
+class ComparisonQuestion(Base):
+    __tablename__ = "comparison_questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    comparison_id: Mapped[int] = mapped_column(
+        ForeignKey("comparisons.id"),
+        index=True,
+    )
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text, default="")
+    supporting_documents: Mapped[str] = mapped_column(Text, default="[]")
+    referenced_sections: Mapped[str] = mapped_column(Text, default="[]")
+    confidence: Mapped[str] = mapped_column(String(50), default="medium")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    comparison = relationship("Comparison", back_populates="questions")

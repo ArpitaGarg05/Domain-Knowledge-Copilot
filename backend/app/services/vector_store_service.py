@@ -88,13 +88,25 @@ class VectorStoreService:
         corpus_id: int,
         query_embedding: list[float],
         limit: int = 5,
+        document_ids: Optional[list[int]] = None,
     ) -> list[RetrievalResult]:
         collection = self.get_or_create_collection(corpus_id)
-        result = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=limit,
-            include=["documents", "metadatas", "distances"],
-        )
+        where_filter = None
+        if document_ids:
+            unique_ids = list(dict.fromkeys(document_ids))
+            where_filter = (
+                {"document_id": unique_ids[0]}
+                if len(unique_ids) == 1
+                else {"document_id": {"$in": unique_ids}}
+            )
+        query_kwargs = {
+            "query_embeddings": [query_embedding],
+            "n_results": limit,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where_filter is not None:
+            query_kwargs["where"] = where_filter
+        result = collection.query(**query_kwargs)
         return self._format_results(result)
 
     def retrieve_by_text(
@@ -114,6 +126,39 @@ class VectorStoreService:
             query_embedding=query_embedding[0].vector,
             limit=limit,
         )
+
+    def retrieve_by_text_for_documents(
+        self,
+        documents_by_corpus: dict[int, list[int]],
+        query_text: str,
+        limit_per_document: int = 3,
+    ) -> list[RetrievalResult]:
+        query_embedding = EmbeddingService().embed_chunks(
+            [TextChunk(page_number=0, chunk_index=0, text=query_text)]
+        )
+        if not query_embedding:
+            return []
+
+        retrieved: list[RetrievalResult] = []
+        for corpus_id, document_ids in documents_by_corpus.items():
+            unique_document_ids = list(dict.fromkeys(document_ids))
+            corpus_results = self.retrieve_by_embedding(
+                corpus_id=corpus_id,
+                query_embedding=query_embedding[0].vector,
+                limit=max(limit_per_document * len(unique_document_ids), limit_per_document),
+                document_ids=unique_document_ids,
+            )
+            grouped: dict[int, list[RetrievalResult]] = {
+                document_id: [] for document_id in unique_document_ids
+            }
+            for result in corpus_results:
+                if result.document_id in grouped:
+                    grouped[result.document_id].append(result)
+
+            for document_id in unique_document_ids:
+                retrieved.extend(grouped[document_id][:limit_per_document])
+
+        return retrieved
 
     def _format_results(self, result: dict) -> list[RetrievalResult]:
         documents = result.get("documents", [[]])[0]

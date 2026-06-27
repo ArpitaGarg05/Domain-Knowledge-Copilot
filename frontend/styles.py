@@ -586,6 +586,16 @@ p { color: var(--dk-muted); }
   font-size:14px;
   line-height:1.7;
 }
+.dk-comparison-ask-shell {
+  margin:0 0 .85rem;
+  padding:.85rem 1rem;
+  border:1px solid rgba(195,192,255,.16);
+  border-radius:11px;
+  background:rgba(1,15,31,.44);
+  color:rgba(199,196,216,.72);
+  font-size:13px;
+  line-height:1.6;
+}
 
 .dk-auth-shell {
   width:min(100%, 480px); margin:6vh auto 0;

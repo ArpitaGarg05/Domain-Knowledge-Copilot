@@ -4,7 +4,12 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.comparison import Comparison, ComparisonDocument, ComparisonResult
+from app.models.comparison import (
+    Comparison,
+    ComparisonDocument,
+    ComparisonQuestion,
+    ComparisonResult,
+)
 
 
 def create_comparison(
@@ -49,6 +54,7 @@ def list_user_comparisons(
                 ComparisonDocument.document,
             ),
             selectinload(Comparison.result),
+            selectinload(Comparison.questions),
         )
         .order_by(Comparison.created_at.desc(), Comparison.id.desc())
         .offset(skip)
@@ -71,6 +77,7 @@ def get_user_comparison(
                 ComparisonDocument.document,
             ),
             selectinload(Comparison.result),
+            selectinload(Comparison.questions),
         )
     )
     return db.scalar(statement)
@@ -84,3 +91,35 @@ def parse_comparison_json(result: Optional[ComparisonResult]) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def create_comparison_question(
+    db: Session,
+    *,
+    comparison_id: int,
+    question: str,
+    answer: str,
+    supporting_documents: list[str],
+    referenced_sections: list[dict[str, Any]],
+    confidence: str,
+) -> ComparisonQuestion:
+    comparison_question = ComparisonQuestion(
+        comparison_id=comparison_id,
+        question=question,
+        answer=answer,
+        supporting_documents=json.dumps(supporting_documents),
+        referenced_sections=json.dumps(referenced_sections),
+        confidence=confidence,
+    )
+    db.add(comparison_question)
+    db.commit()
+    db.refresh(comparison_question)
+    return comparison_question
+
+
+def parse_json_list(value: str) -> list[Any]:
+    try:
+        parsed = json.loads(value or "[]")
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []

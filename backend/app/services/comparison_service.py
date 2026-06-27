@@ -7,6 +7,7 @@ from typing import Any, Optional
 from app.models.document import Document
 from app.services.llm_service import LLMGenerationError, LLMService
 from app.services.pdf_processor import extract_pdf_text
+from app.services.vector_store_service import RetrievalResult, VectorStoreService
 
 
 class ComparisonValidationError(ValueError):
@@ -35,11 +36,25 @@ class GeneratedComparison:
     summaries: list[DocumentSummary]
 
 
+@dataclass(frozen=True)
+class GeneratedComparisonAnswer:
+    answer: str
+    supporting_documents: list[str]
+    referenced_sections: list[dict[str, Any]]
+    confidence: str
+    retrieved_chunks: list[RetrievalResult]
+
+
 class ComparisonService:
     max_document_chars = 24000
 
-    def __init__(self, llm_service: Optional[LLMService] = None) -> None:
+    def __init__(
+        self,
+        llm_service: Optional[LLMService] = None,
+        vector_store_service: Optional[VectorStoreService] = None,
+    ) -> None:
         self.llm_service = llm_service or LLMService()
+        self.vector_store_service = vector_store_service or VectorStoreService()
 
     def compare_documents(self, documents: list[Document]) -> GeneratedComparison:
         if len(documents) < 2:
@@ -79,6 +94,62 @@ class ComparisonService:
             summaries=summaries,
         )
 
+    def answer_question(
+        self,
+        *,
+        question: str,
+        documents: list[Document],
+        limit_per_document: int = 3,
+    ) -> GeneratedComparisonAnswer:
+        if len(documents) < 2:
+            raise ComparisonValidationError(
+                "A comparison needs at least two documents before questions can be answered.",
+            )
+
+        documents_by_corpus: dict[int, list[int]] = {}
+        for document in documents:
+            documents_by_corpus.setdefault(document.corpus_id, []).append(document.id)
+
+        retrieved_chunks = self.vector_store_service.retrieve_by_text_for_documents(
+            documents_by_corpus=documents_by_corpus,
+            query_text=question,
+            limit_per_document=limit_per_document,
+        )
+        if not retrieved_chunks:
+            return GeneratedComparisonAnswer(
+                answer=(
+                    "I could not find enough retrieved context in the compared "
+                    "documents to answer this question."
+                ),
+                supporting_documents=[],
+                referenced_sections=[],
+                confidence="low",
+                retrieved_chunks=[],
+            )
+
+        grouped_context = self._group_chunks_for_prompt(documents, retrieved_chunks)
+        raw_answer = self.llm_service.generate_comparison_answer(
+            question=question,
+            grouped_context=grouped_context,
+        )
+        parsed = self._parse_json_response(raw_answer)
+        chunk_lookup = {
+            (chunk.filename, chunk.chunk_reference): chunk
+            for chunk in retrieved_chunks
+        }
+        referenced_sections = self._normalize_referenced_sections(
+            parsed.get("referenced_sections"),
+            chunk_lookup,
+            retrieved_chunks,
+        )
+        return GeneratedComparisonAnswer(
+            answer=self._string_value(parsed, "answer"),
+            supporting_documents=self._list_value(parsed, "supporting_documents"),
+            referenced_sections=referenced_sections,
+            confidence=self._normalize_confidence(parsed.get("confidence")),
+            retrieved_chunks=retrieved_chunks,
+        )
+
     def _build_input(self, document: Document) -> DocumentComparisonInput:
         page_text = "\n\n".join(
             page.text.strip() for page in document.pages if page.text.strip()
@@ -97,6 +168,25 @@ class ComparisonService:
             filename=document.filename,
             text=page_text,
         )
+
+    def _group_chunks_for_prompt(
+        self,
+        documents: list[Document],
+        chunks: list[RetrievalResult],
+    ) -> dict[str, list[RetrievalResult]]:
+        chunks_by_document: dict[int, list[RetrievalResult]] = {}
+        for chunk in chunks:
+            chunks_by_document.setdefault(chunk.document_id, []).append(chunk)
+
+        labels: dict[int, str] = {}
+        for index, document in enumerate(documents):
+            suffix = chr(ord("A") + index)
+            labels[document.id] = f"Document {suffix}: {document.filename}"
+
+        return {
+            labels[document.id]: chunks_by_document.get(document.id, [])
+            for document in documents
+        }
 
     def _parse_json_response(self, response: str) -> dict[str, Any]:
         stripped = response.strip()
@@ -176,6 +266,42 @@ class ComparisonService:
                     str(topic).strip() for topic in topics if str(topic).strip()
                 ]
         return normalized
+
+    def _normalize_referenced_sections(
+        self,
+        value: Any,
+        chunk_lookup: dict[tuple[str, str], RetrievalResult],
+        retrieved_chunks: list[RetrievalResult],
+    ) -> list[dict[str, Any]]:
+        sections: list[dict[str, Any]] = []
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                filename = str(item.get("filename", ""))
+                chunk_reference = str(item.get("chunk_reference", ""))
+                chunk = chunk_lookup.get((filename, chunk_reference))
+                if chunk is None:
+                    continue
+                sections.append(self._section_from_chunk(chunk))
+
+        if sections:
+            return sections
+
+        return [self._section_from_chunk(chunk) for chunk in retrieved_chunks[:6]]
+
+    def _section_from_chunk(self, chunk: RetrievalResult) -> dict[str, Any]:
+        return {
+            "document_id": chunk.document_id,
+            "filename": chunk.filename,
+            "page_number": chunk.page_number,
+            "chunk_reference": chunk.chunk_reference,
+            "text": chunk.text,
+        }
+
+    def _normalize_confidence(self, value: Any) -> str:
+        confidence = str(value or "medium").strip().lower()
+        return confidence if confidence in {"high", "medium", "low"} else "medium"
 
     def _build_title(self, summaries: list[DocumentSummary]) -> str:
         first_two = " vs ".join(summary.filename for summary in summaries[:2])

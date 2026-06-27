@@ -31,11 +31,15 @@ from app.schemas.corpus import (
 )
 from app.schemas.comparison import (
     ComparedDocumentResponse,
+    ComparisonAskRequest,
+    ComparisonAskResponse,
     ComparisonCreateRequest,
     ComparisonCreateResponse,
     ComparisonDetailResponse,
     ComparisonListItemResponse,
     ComparisonListResponse,
+    ComparisonQuestionResponse,
+    ReferencedSectionResponse,
 )
 from app.schemas.document import (
     CorpusDocumentListResponse,
@@ -254,6 +258,27 @@ def build_comparison_list_item(comparison) -> ComparisonListItemResponse:
     )
 
 
+def build_comparison_question_response(question) -> ComparisonQuestionResponse:
+    referenced_sections = [
+        ReferencedSectionResponse(**section)
+        for section in comparison_crud.parse_json_list(question.referenced_sections)
+        if isinstance(section, dict)
+    ]
+    supporting_documents = [
+        str(document)
+        for document in comparison_crud.parse_json_list(question.supporting_documents)
+    ]
+    return ComparisonQuestionResponse(
+        id=question.id,
+        question=question.question,
+        answer=question.answer,
+        supporting_documents=supporting_documents,
+        referenced_sections=referenced_sections,
+        confidence=question.confidence,
+        created_at=question.created_at,
+    )
+
+
 def build_comparison_detail_response(comparison) -> ComparisonDetailResponse:
     comparison_json = comparison_crud.parse_comparison_json(comparison.result)
     base = build_comparison_create_response(comparison)
@@ -266,6 +291,10 @@ def build_comparison_detail_response(comparison) -> ComparisonDetailResponse:
             if link.document is not None
         ],
         comparison_json=comparison_json,
+        questions=[
+            build_comparison_question_response(question)
+            for question in comparison.questions
+        ],
         created_at=comparison.created_at,
         **base.model_dump(),
     )
@@ -388,6 +417,70 @@ def get_comparison(
             detail="Comparison not found.",
         )
     return build_comparison_detail_response(comparison)
+
+
+@router.post(
+    "/comparisons/{comparison_id}/ask",
+    response_model=ComparisonAskResponse,
+)
+def ask_comparison_question(
+    comparison_id: int,
+    request: ComparisonAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ComparisonAskResponse:
+    comparison = comparison_crud.get_user_comparison(
+        db,
+        comparison_id,
+        user_id=current_user.id,
+    )
+    if comparison is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comparison not found.",
+        )
+
+    documents = [
+        link.document for link in comparison.documents if link.document is not None
+    ]
+    try:
+        generated = ComparisonService().answer_question(
+            question=request.question,
+            documents=documents,
+        )
+    except ComparisonValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    except LLMConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+    except LLMGenerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    saved_question = comparison_crud.create_comparison_question(
+        db,
+        comparison_id=comparison.id,
+        question=request.question,
+        answer=generated.answer,
+        supporting_documents=generated.supporting_documents,
+        referenced_sections=generated.referenced_sections,
+        confidence=generated.confidence,
+    )
+    response = build_comparison_question_response(saved_question)
+    return ComparisonAskResponse(
+        answer=response.answer,
+        supporting_documents=response.supporting_documents,
+        referenced_sections=response.referenced_sections,
+        confidence=response.confidence,
+        created_at=response.created_at,
+    )
 
 
 @router.post(

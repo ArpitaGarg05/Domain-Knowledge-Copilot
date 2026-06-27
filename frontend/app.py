@@ -214,6 +214,15 @@ def fetch_comparison(comparison_id: int) -> dict[str, Any]:
     return request_json("GET", f"/comparisons/{comparison_id}")
 
 
+def ask_comparison_question(comparison_id: int, question: str) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        f"/comparisons/{comparison_id}/ask",
+        json={"question": question},
+        timeout=90,
+    )
+
+
 def store_auth_session(auth_response: dict[str, Any]) -> None:
     st.session_state.access_token = auth_response["access_token"]
     st.session_state.current_user = auth_response["user"]
@@ -1154,6 +1163,114 @@ def render_comparison_result(result: dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    render_comparison_chat(result)
+
+
+def render_comparison_answer_sources(sections: list[dict[str, Any]]) -> None:
+    if not sections:
+        return
+    st.markdown(
+        f"""
+        <div class="dk-section-title" style="margin:.9rem 0 .45rem">
+          <h2 style="font-size:14px">Referenced sections</h2>
+          <span>{len(sections)} grounded chunks</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    for index, section in enumerate(sections, start=1):
+        with st.expander(f"Compare_chunk_{index:02d}", expanded=False):
+            st.markdown(
+                f"""
+                <div class="dk-source-head">
+                  <div class="dk-source-index">[{index:02d}]</div>
+                  <div class="dk-source-copy">
+                    <strong>{escape(str(section.get("filename", "Unknown source")))}</strong>
+                    <p>Comparison evidence section</p>
+                  </div>
+                  <span class="dk-page-chip">PAGE {int(section.get("page_number", 0))}</span>
+                </div>
+                <div class="dk-source-text">{escape(str(section.get("text", "")).strip())}</div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                f"Source document: {section.get('filename', 'Unknown source')} · "
+                f"Page {section.get('page_number', 0)} · "
+                f"Chunk {section.get('chunk_reference', 'unknown')}"
+            )
+
+
+def submit_comparison_question(comparison_id: int, question: str) -> None:
+    try:
+        with st.spinner("Retrieving chunks across compared documents..."):
+            ask_comparison_question(comparison_id, question)
+        st.session_state.pop("latest_comparison_result", None)
+        st.session_state.active_comparison_id = comparison_id
+        st.rerun()
+    except requests.RequestException as error:
+        render_api_error(error)
+
+
+def render_comparison_chat(result: dict[str, Any]) -> None:
+    comparison_id = int(result.get("id") or result.get("comparison_id"))
+    section_title("Ask about these documents", "Grounded comparison chat")
+    st.markdown(
+        """
+        <div class="dk-comparison-ask-shell">
+          Ask targeted questions across only the PDFs in this comparison. Answers cite
+          retrieved chunks and stay inside the selected documents.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    examples = [
+        "What concepts are common?",
+        "Which PDF explains this topic better?",
+        "What exists only in the last PDF?",
+        "Compare scheduling algorithms.",
+    ]
+    example_columns = st.columns(4)
+    for index, example in enumerate(examples):
+        with example_columns[index]:
+            if st.button(
+                example,
+                key=f"comparison-example-{comparison_id}-{index}",
+                use_container_width=True,
+            ):
+                submit_comparison_question(comparison_id, example)
+
+    questions = result.get("questions", [])
+    if not questions:
+        with st.chat_message("assistant"):
+            st.write(
+                "I’m ready to compare these documents. Ask what overlaps, what differs, "
+                "or which PDF explains a concept more clearly."
+            )
+
+    for item in questions:
+        with st.chat_message("user"):
+            st.write(item.get("question", ""))
+            if item.get("created_at"):
+                st.caption(format_datetime(item["created_at"], "%d %b · %H:%M"))
+        with st.chat_message("assistant"):
+            st.write(item.get("answer", ""))
+            support = item.get("supporting_documents", [])
+            confidence = item.get("confidence", "medium")
+            st.caption(
+                f"Confidence: {confidence.title()} · "
+                f"Supporting documents: {', '.join(support) if support else 'No specific support'}"
+            )
+            render_comparison_answer_sources(item.get("referenced_sections", []))
+
+    question = st.chat_input(
+        "Ask about these compared documents…",
+        key=f"comparison-chat-input-{comparison_id}",
+    )
+    if question:
+        submit_comparison_question(comparison_id, question)
 
 
 def render_compare_documents(corpora: list[dict[str, Any]]) -> None:
