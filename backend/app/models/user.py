@@ -17,3 +17,8 @@ class User(Base):
 
     corpora = relationship("Corpus", back_populates="owner")
     chat_messages = relationship("ChatMessage", back_populates="user")
+    comparisons = relationship(
+        "Comparison",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

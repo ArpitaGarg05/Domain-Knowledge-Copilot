@@ -40,6 +40,7 @@ PAGES = [
     "Corpus Dashboard",
     "Corpus Detail",
     "Corpus Chat",
+    "Compare Documents",
     "Chat History",
     "Settings",
 ]
@@ -194,6 +195,23 @@ def answer_question(
         },
         timeout=60,
     )
+
+
+def create_comparison(document_ids: list[int]) -> dict[str, Any]:
+    return request_json(
+        "POST",
+        "/comparisons",
+        json={"document_ids": document_ids},
+        timeout=180,
+    )
+
+
+def fetch_comparisons() -> list[dict[str, Any]]:
+    return request_json("GET", "/comparisons")["comparisons"]
+
+
+def fetch_comparison(comparison_id: int) -> dict[str, Any]:
+    return request_json("GET", f"/comparisons/{comparison_id}")
 
 
 def store_auth_session(auth_response: dict[str, Any]) -> None:
@@ -1029,6 +1047,238 @@ def render_history(corpora: list[dict[str, Any]]) -> None:
             )
 
 
+def fetch_all_documents(corpora: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    for corpus in corpora:
+        detail = fetch_corpus_documents(int(corpus["id"]))
+        for document in detail.get("documents", []):
+            document["corpus_name"] = corpus["name"]
+            documents.append(document)
+    return documents
+
+
+def comparison_list(title: str, items: list[Any]) -> None:
+    if not items:
+        st.caption(f"No {title.lower()} returned.")
+        return
+    st.markdown(
+        "<ul class=\"dk-comparison-list\">"
+        + "".join(f"<li>{escape(str(item))}</li>" for item in items)
+        + "</ul>",
+        unsafe_allow_html=True,
+    )
+
+
+def comparison_topic_map(title: str, topic_map: dict[str, Any]) -> None:
+    section_title(title, f"{len(topic_map)} documents")
+    if not topic_map:
+        empty_state("No document-specific topics", "The comparison did not return a document map.", "≋")
+        return
+    columns = st.columns(2)
+    for index, (document_name, topics) in enumerate(topic_map.items()):
+        with columns[index % 2]:
+            st.markdown(
+                f"""
+                <div class="dk-comparison-doc-card">
+                  <span class="dk-chip">Document</span>
+                  <h3 title="{escape(str(document_name))}">{escape(str(document_name))}</h3>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            comparison_list("Topics", topics if isinstance(topics, list) else [])
+
+
+def render_comparison_result(result: dict[str, Any]) -> None:
+    comparison_id = result.get("comparison_id") or result.get("id")
+    st.markdown(
+        f"""
+        <div class="dk-comparison-hero">
+          <div>
+            <span class="dk-chip">Comparison {int(comparison_id):02d}</span>
+            <h2>{escape(str(result.get("title") or "Document comparison"))}</h2>
+            <p>{escape(str(result.get("overall_summary") or "No summary returned."))}</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    documents = result.get("documents", [])
+    if documents:
+        section_title("Compared documents", f"{len(documents)} selected")
+        st.markdown(
+            "<div class=\"dk-comparison-docs\">"
+            + "".join(
+                (
+                    "<div class=\"dk-comparison-doc-pill\">"
+                    f"<strong>{escape(str(document.get('filename', 'Document')))}</strong>"
+                    f"<span>{escape(str(document.get('corpus_name', 'Corpus')))}</span>"
+                    "</div>"
+                )
+                for document in documents
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+    summary, common = st.columns([1.2, 1], gap="large")
+    with summary:
+        section_title("Major Differences", "Conceptual deltas")
+        comparison_list("Major differences", result.get("major_differences", []))
+    with common:
+        section_title("Common Topics", "Shared ground")
+        comparison_list("Common topics", result.get("common_topics", []))
+
+    comparison_topic_map("Unique Topics", result.get("unique_topics", {}))
+    comparison_topic_map("Missing Concepts", result.get("missing_concepts", {}))
+
+    beginner, comprehensive = st.columns(2, gap="large")
+    with beginner:
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Beginner fit</div>', unsafe_allow_html=True)
+            st.subheader(result.get("beginner_document") or "Not specified")
+            st.caption("Document most suitable for first-pass learning.")
+    with comprehensive:
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Coverage</div>', unsafe_allow_html=True)
+            st.subheader(result.get("most_comprehensive_document") or "Not specified")
+            st.caption("Document with the broadest or deepest treatment.")
+
+    section_title("Final Recommendation", "Decision support")
+    st.markdown(
+        f"""
+        <div class="dk-recommendation">
+          {escape(str(result.get("recommendation") or "No recommendation returned."))}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_compare_documents(corpora: list[dict[str, Any]]) -> None:
+    page_header(
+        "Comparative intelligence",
+        "Compare Documents",
+        "Select two or more uploaded PDFs and generate a structured summary-to-summary comparison.",
+    )
+
+    if not corpora:
+        empty_state("No corpora available", "Create a corpus and upload PDFs before comparing documents.", "PDF")
+        return
+
+    try:
+        documents = fetch_all_documents(corpora)
+        comparisons = fetch_comparisons()
+    except requests.RequestException as error:
+        render_api_error(error)
+        return
+
+    metric_grid(
+        [
+            ("Uploaded PDFs", str(len(documents)), "Available for comparison", "primary"),
+            ("Previous comparisons", str(len(comparisons)), "Saved analyses", None),
+            ("Active corpora", str(len(corpora)), "Document sources", "success"),
+        ]
+    )
+
+    if len(documents) < 2:
+        empty_state(
+            "At least two PDFs are required",
+            "Upload another document in Corpus Detail to unlock comparison.",
+            "≋",
+        )
+        return
+
+    compare_panel, archive_panel = st.columns([1.45, 0.9], gap="large")
+    documents_by_id = {int(document["id"]): document for document in documents}
+
+    with compare_panel:
+        section_title("New comparison", "2+ documents")
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="dk-label">Document set</div>
+                <h3 style="margin:.45rem 0 .35rem">Select PDFs to compare</h3>
+                <p style="font-size:13px;margin:0 0 .8rem">
+                  The backend summarizes each document first, then compares only the summaries.
+                </p>
+                """,
+                unsafe_allow_html=True,
+            )
+            selected_document_ids = st.multiselect(
+                "Uploaded documents",
+                options=[int(document["id"]) for document in documents],
+                format_func=lambda document_id: (
+                    f"{documents_by_id[document_id]['filename']} · "
+                    f"{documents_by_id[document_id]['corpus_name']}"
+                ),
+                placeholder="Choose two or more indexed PDFs",
+            )
+            selected_count = len(selected_document_ids)
+            st.caption(f"{selected_count} document{'s' if selected_count != 1 else ''} selected.")
+            if st.button(
+                "Compare Documents",
+                type="primary",
+                use_container_width=True,
+                disabled=selected_count < 2,
+            ):
+                try:
+                    with st.spinner("Summarizing documents and generating comparison..."):
+                        result = create_comparison(selected_document_ids)
+                    st.session_state.active_comparison_id = result["comparison_id"]
+                    st.session_state.latest_comparison_result = result
+                    st.rerun()
+                except requests.RequestException as error:
+                    render_api_error(error)
+
+    with archive_panel:
+        section_title("Comparison archive", f"{len(comparisons)} saved")
+        if not comparisons:
+            empty_state("No comparisons yet", "Run your first comparison to create an archive item.", "◇")
+        else:
+            for comparison in comparisons[:6]:
+                with st.container(border=True):
+                    st.markdown(
+                        f"""
+                        <div class="dk-history-card">
+                          <div class="dk-history-card__top">
+                            <span class="dk-chip">{int(comparison["document_count"])} docs</span>
+                            <h3>{escape(str(comparison["title"]))}</h3>
+                          </div>
+                          <time>{escape(format_datetime(comparison.get("created_at"), "%d %b · %H:%M"))}</time>
+                          <p>{escape(str(comparison.get("overall_summary") or "Open for details."))}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        "Open Comparison  →",
+                        key=f"open-comparison-{comparison['id']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.active_comparison_id = comparison["id"]
+                        st.session_state.pop("latest_comparison_result", None)
+                        st.rerun()
+
+    result: Optional[dict[str, Any]] = st.session_state.get("latest_comparison_result")
+    active_id = st.session_state.get("active_comparison_id")
+    if active_id and (
+        not result
+        or int(result.get("comparison_id", result.get("id", 0))) != int(active_id)
+        or "documents" not in result
+    ):
+        try:
+            result = fetch_comparison(int(active_id))
+        except requests.RequestException as error:
+            render_api_error(error)
+            result = None
+
+    if result:
+        section_title("Comparison output", "Structured JSON rendered")
+        render_comparison_result(result)
+
+
 def render_settings(corpora: list[dict[str, Any]]) -> None:
     user = st.session_state.get("current_user", {})
     page_header(
@@ -1106,7 +1356,7 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
             )
             st.selectbox(
                 "Default workspace",
-                ["Corpus Dashboard", "Corpus Chat", "Chat History"],
+                ["Corpus Dashboard", "Corpus Chat", "Compare Documents", "Chat History"],
                 key="default_workspace",
             )
 
@@ -1181,6 +1431,8 @@ elif page == "Corpus Detail":
     render_corpus_detail(corpora)
 elif page == "Corpus Chat":
     render_chat(corpora)
+elif page == "Compare Documents":
+    render_compare_documents(corpora)
 elif page == "Chat History":
     render_history(corpora)
 else:

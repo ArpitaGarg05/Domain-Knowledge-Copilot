@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.crud import chat_message as chat_message_crud
+from app.crud import comparison as comparison_crud
 from app.crud import corpus as corpus_crud
 from app.crud import document as document_crud
 from app.crud import user as user_crud
@@ -28,6 +29,14 @@ from app.schemas.corpus import (
     CorpusDeleteResponse,
     CorpusResponse,
 )
+from app.schemas.comparison import (
+    ComparedDocumentResponse,
+    ComparisonCreateRequest,
+    ComparisonCreateResponse,
+    ComparisonDetailResponse,
+    ComparisonListItemResponse,
+    ComparisonListResponse,
+)
 from app.schemas.document import (
     CorpusDocumentListResponse,
     DocumentResponse,
@@ -42,6 +51,10 @@ from app.schemas.search import (
     SearchRequest,
 )
 from app.services.chunk_service import ChunkService
+from app.services.comparison_service import (
+    ComparisonService,
+    ComparisonValidationError,
+)
 from app.services.embedding_service import EmbeddingService
 from app.services.llm_service import (
     LLMConfigurationError,
@@ -198,6 +211,66 @@ def build_document_summary(document) -> DocumentSummaryResponse:
     )
 
 
+def build_compared_document_response(document) -> ComparedDocumentResponse:
+    return ComparedDocumentResponse(
+        id=document.id,
+        filename=document.filename,
+        corpus_id=document.corpus_id,
+        corpus_name=document.corpus.name if document.corpus else f"Corpus {document.corpus_id}",
+    )
+
+
+def build_comparison_create_response(comparison) -> ComparisonCreateResponse:
+    comparison_json = comparison_crud.parse_comparison_json(comparison.result)
+    return ComparisonCreateResponse(
+        comparison_id=comparison.id,
+        overall_summary=str(comparison_json.get("overall_summary", "")),
+        common_topics=list(comparison_json.get("common_topics", [])),
+        unique_topics=dict(comparison_json.get("unique_topics", {})),
+        major_differences=list(comparison_json.get("major_differences", [])),
+        missing_concepts=dict(comparison_json.get("missing_concepts", {})),
+        beginner_document=str(comparison_json.get("beginner_document", "")),
+        most_comprehensive_document=str(
+            comparison_json.get("most_comprehensive_document", ""),
+        ),
+        recommendation=str(comparison_json.get("recommendation", "")),
+    )
+
+
+def build_comparison_list_item(comparison) -> ComparisonListItemResponse:
+    comparison_json = comparison_crud.parse_comparison_json(comparison.result)
+    documents = [
+        build_compared_document_response(link.document)
+        for link in comparison.documents
+        if link.document is not None
+    ]
+    return ComparisonListItemResponse(
+        id=comparison.id,
+        title=comparison.title,
+        overall_summary=str(comparison_json.get("overall_summary", "")),
+        document_count=len(documents),
+        documents=documents,
+        created_at=comparison.created_at,
+    )
+
+
+def build_comparison_detail_response(comparison) -> ComparisonDetailResponse:
+    comparison_json = comparison_crud.parse_comparison_json(comparison.result)
+    base = build_comparison_create_response(comparison)
+    return ComparisonDetailResponse(
+        id=comparison.id,
+        title=comparison.title,
+        documents=[
+            build_compared_document_response(link.document)
+            for link in comparison.documents
+            if link.document is not None
+        ],
+        comparison_json=comparison_json,
+        created_at=comparison.created_at,
+        **base.model_dump(),
+    )
+
+
 @router.get(
     "/corpora/{corpus_id}/documents",
     response_model=CorpusDocumentListResponse,
@@ -227,6 +300,94 @@ def list_corpus_documents(
         total_embeddings=sum(document.embedding_count for document in documents),
         total_storage_bytes=sum(document.file_size_bytes for document in documents),
     )
+
+
+@router.post("/comparisons", response_model=ComparisonCreateResponse)
+def create_comparison(
+    request: ComparisonCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ComparisonCreateResponse:
+    document_ids = list(dict.fromkeys(request.document_ids))
+    if len(document_ids) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Select at least two unique documents to compare.",
+        )
+
+    documents = document_crud.list_user_documents_by_ids(
+        db,
+        document_ids=document_ids,
+        owner_id=current_user.id,
+    )
+    if len(documents) != len(document_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="One or more selected documents were not found.",
+        )
+
+    try:
+        generated = ComparisonService().compare_documents(documents)
+    except ComparisonValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    except LLMConfigurationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+    except LLMGenerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    comparison = comparison_crud.create_comparison(
+        db,
+        user_id=current_user.id,
+        title=generated.title,
+        document_ids=[document.id for document in documents],
+        overall_summary=generated.overall_summary,
+        comparison_json=generated.comparison_json,
+    )
+    return build_comparison_create_response(comparison)
+
+
+@router.get("/comparisons", response_model=ComparisonListResponse)
+def list_comparisons(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ComparisonListResponse:
+    comparisons = comparison_crud.list_user_comparisons(
+        db,
+        user_id=current_user.id,
+        limit=limit,
+    )
+    return ComparisonListResponse(
+        comparisons=[build_comparison_list_item(comparison) for comparison in comparisons],
+    )
+
+
+@router.get("/comparisons/{comparison_id}", response_model=ComparisonDetailResponse)
+def get_comparison(
+    comparison_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ComparisonDetailResponse:
+    comparison = comparison_crud.get_user_comparison(
+        db,
+        comparison_id,
+        user_id=current_user.id,
+    )
+    if comparison is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Comparison not found.",
+        )
+    return build_comparison_detail_response(comparison)
 
 
 @router.post(

@@ -8,7 +8,7 @@ from sqlalchemy import inspect
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
-from app.models import chat_message, corpus, document, user
+from app.models import chat_message, comparison, corpus, document, user
 
 logger = logging.getLogger(__name__)
 

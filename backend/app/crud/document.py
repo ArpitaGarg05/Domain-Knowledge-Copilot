@@ -1,5 +1,7 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+
+from app.models.corpus import Corpus
 
 from app.models.document import ChunkEmbedding, Document, DocumentChunk, DocumentPage
 from app.services.chunk_service import TextChunk
@@ -14,6 +16,31 @@ def list_documents(db: Session, corpus_id: int) -> list[Document]:
         .order_by(Document.uploaded_at.desc(), Document.id.desc())
     )
     return list(db.scalars(statement))
+
+
+def list_user_documents_by_ids(
+    db: Session,
+    *,
+    document_ids: list[int],
+    owner_id: int,
+) -> list[Document]:
+    unique_ids = list(dict.fromkeys(document_ids))
+    statement = (
+        select(Document)
+        .join(Corpus)
+        .where(Document.id.in_(unique_ids), Corpus.owner_id == owner_id)
+        .options(
+            selectinload(Document.corpus),
+            selectinload(Document.pages),
+        )
+    )
+    documents = list(db.scalars(statement))
+    documents_by_id = {document.id: document for document in documents}
+    return [
+        documents_by_id[document_id]
+        for document_id in unique_ids
+        if document_id in documents_by_id
+    ]
 
 
 def create_document(

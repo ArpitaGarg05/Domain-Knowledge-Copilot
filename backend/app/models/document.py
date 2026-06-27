@@ -33,6 +33,11 @@ class Document(Base):
         cascade="all, delete-orphan",
         order_by="DocumentChunk.chunk_index",
     )
+    comparison_links = relationship(
+        "ComparisonDocument",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def chunk_count(self) -> int:

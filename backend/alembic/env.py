@@ -5,7 +5,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.db.base import Base
-from app.models import chat_message, corpus, document, user
+from app.models import chat_message, comparison, corpus, document, user
 
 config = context.config
 
