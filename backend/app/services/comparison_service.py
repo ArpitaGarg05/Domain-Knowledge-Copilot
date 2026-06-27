@@ -41,6 +41,7 @@ class GeneratedComparisonAnswer:
     answer: str
     supporting_documents: list[str]
     referenced_sections: list[dict[str, Any]]
+    evidence: list[dict[str, Any]]
     confidence: str
     retrieved_chunks: list[RetrievalResult]
 
@@ -87,6 +88,10 @@ class ComparisonService:
             self._parse_json_response(raw_comparison),
             summaries,
         )
+        comparison_json["evidence"] = self._build_comparison_evidence(
+            comparison_json=comparison_json,
+            documents=documents,
+        )
         return GeneratedComparison(
             title=self._build_title(summaries),
             overall_summary=str(comparison_json["overall_summary"]),
@@ -123,6 +128,7 @@ class ComparisonService:
                 ),
                 supporting_documents=[],
                 referenced_sections=[],
+                evidence=[],
                 confidence="low",
                 retrieved_chunks=[],
             )
@@ -142,10 +148,12 @@ class ComparisonService:
             chunk_lookup,
             retrieved_chunks,
         )
+        answer = self._string_value(parsed, "answer")
         return GeneratedComparisonAnswer(
-            answer=self._string_value(parsed, "answer"),
+            answer=answer,
             supporting_documents=self._list_value(parsed, "supporting_documents"),
             referenced_sections=referenced_sections,
+            evidence=self._build_answer_evidence(answer, retrieved_chunks),
             confidence=self._normalize_confidence(parsed.get("confidence")),
             retrieved_chunks=retrieved_chunks,
         )
@@ -233,6 +241,72 @@ class ComparisonService:
             },
         }
 
+    def _build_comparison_evidence(
+        self,
+        *,
+        comparison_json: dict[str, Any],
+        documents: list[Document],
+    ) -> list[dict[str, Any]]:
+        statements = self._collect_comparison_statements(comparison_json)
+        if not statements:
+            return []
+
+        documents_by_corpus: dict[int, list[int]] = {}
+        for document in documents:
+            documents_by_corpus.setdefault(document.corpus_id, []).append(document.id)
+
+        evidence_chunks = self.vector_store_service.retrieve_evidence_for_texts(
+            documents_by_corpus=documents_by_corpus,
+            texts=statements,
+            limit_per_statement=3,
+        )
+        return [
+            {
+                "statement": statement,
+                "citations": [
+                    self._citation_from_chunk(chunk)
+                    for chunk in evidence_chunks.get(index, [])
+                ],
+            }
+            for index, statement in enumerate(statements)
+        ]
+
+    def _collect_comparison_statements(
+        self,
+        comparison_json: dict[str, Any],
+    ) -> list[str]:
+        statements: list[str] = []
+        self._append_statement(statements, comparison_json.get("overall_summary"))
+        for topic in comparison_json.get("common_topics", []):
+            self._append_statement(statements, topic)
+        for document_name, topics in comparison_json.get("unique_topics", {}).items():
+            for topic in topics:
+                self._append_statement(statements, f"{topic} is unique to {document_name}.")
+        for difference in comparison_json.get("major_differences", []):
+            self._append_statement(statements, difference)
+        for document_name, concepts in comparison_json.get("missing_concepts", {}).items():
+            for concept in concepts:
+                self._append_statement(statements, f"{concept} is missing from {document_name}.")
+        beginner = comparison_json.get("beginner_document")
+        if beginner:
+            self._append_statement(
+                statements,
+                f"{beginner} is most suitable for beginners.",
+            )
+        comprehensive = comparison_json.get("most_comprehensive_document")
+        if comprehensive:
+            self._append_statement(
+                statements,
+                f"{comprehensive} is the most comprehensive document.",
+            )
+        self._append_statement(statements, comparison_json.get("recommendation"))
+        return statements
+
+    def _append_statement(self, statements: list[str], value: Any) -> None:
+        statement = str(value or "").strip()
+        if statement and statement not in statements:
+            statements.append(statement)
+
     def _string_value(self, parsed: dict[str, Any], key: str) -> str:
         value = parsed.get(key, "")
         return value.strip() if isinstance(value, str) else ""
@@ -297,7 +371,81 @@ class ComparisonService:
             "page_number": chunk.page_number,
             "chunk_reference": chunk.chunk_reference,
             "text": chunk.text,
+            "chunk_id": chunk.chunk_id,
+            "score": self._score_from_distance(chunk.distance),
         }
+
+    def _build_answer_evidence(
+        self,
+        answer: str,
+        retrieved_chunks: list[RetrievalResult],
+    ) -> list[dict[str, Any]]:
+        statements = self._split_answer_statements(answer)
+        return [
+            {
+                "statement": statement,
+                "citations": [
+                    self._citation_from_chunk(chunk)
+                    for chunk in self._best_chunks_for_statement(
+                        statement,
+                        retrieved_chunks,
+                    )
+                ],
+            }
+            for statement in statements
+        ]
+
+    def _split_answer_statements(self, answer: str) -> list[str]:
+        statements: list[str] = []
+        for line in answer.splitlines():
+            cleaned = line.strip(" -•\t")
+            if not cleaned or cleaned.lower() in {
+                "summary",
+                "final comparison",
+            } or cleaned.lower().startswith("document "):
+                continue
+            if len(cleaned) >= 12:
+                statements.append(cleaned)
+        return statements[:8]
+
+    def _best_chunks_for_statement(
+        self,
+        statement: str,
+        retrieved_chunks: list[RetrievalResult],
+        limit: int = 3,
+    ) -> list[RetrievalResult]:
+        statement_tokens = set(re.findall(r"\b\w+\b", statement.lower()))
+        scored: list[tuple[float, RetrievalResult]] = []
+        for chunk in retrieved_chunks:
+            chunk_tokens = set(re.findall(r"\b\w+\b", chunk.text.lower()))
+            overlap = len(statement_tokens & chunk_tokens)
+            similarity = self._score_from_distance(chunk.distance)
+            scored.append((overlap + similarity, chunk))
+        return [
+            chunk
+            for _, chunk in sorted(
+                scored,
+                key=lambda item: item[0],
+                reverse=True,
+            )[:limit]
+        ]
+
+    def _citation_from_chunk(self, chunk: RetrievalResult) -> dict[str, Any]:
+        return {
+            "document": chunk.filename,
+            "page": chunk.page_number,
+            "chunk": chunk.chunk_reference,
+            "score": self._score_from_distance(chunk.distance),
+            "relevant_paragraph": chunk.text,
+            "document_id": chunk.document_id,
+            "chunk_id": chunk.chunk_id,
+        }
+
+    def _score_from_distance(self, distance: Optional[float]) -> float:
+        if distance is None:
+            return 0.0
+        score = 1 / (1 + max(float(distance), 0.0))
+        return round(score, 4)
 
     def _normalize_confidence(self, value: Any) -> str:
         confidence = str(value or "medium").strip().lower()

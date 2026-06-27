@@ -1066,19 +1066,120 @@ def fetch_all_documents(corpora: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return documents
 
 
-def comparison_list(title: str, items: list[Any]) -> None:
+def evidence_for_statement(
+    evidence_items: list[dict[str, Any]],
+    statement: str,
+) -> Optional[dict[str, Any]]:
+    normalized = statement.strip().lower()
+    for evidence_item in evidence_items:
+        evidence_statement = str(evidence_item.get("statement", "")).strip().lower()
+        if (
+            evidence_statement == normalized
+            or normalized in evidence_statement
+            or evidence_statement in normalized
+        ):
+            return evidence_item
+    return None
+
+
+def highlight_relevant_paragraph(paragraph: str, statement: str) -> str:
+    sentences = re_split_sentences(paragraph)
+    statement_tokens = {
+        token
+        for token in re_words(statement)
+        if len(token) > 4
+    }
+    if not sentences or not statement_tokens:
+        return escape(paragraph)
+
+    best_sentence = max(
+        sentences,
+        key=lambda sentence: len(statement_tokens & set(re_words(sentence))),
+    )
+    if not best_sentence.strip():
+        return escape(paragraph)
+
+    highlighted = escape(paragraph).replace(
+        escape(best_sentence),
+        f"<mark>{escape(best_sentence)}</mark>",
+        1,
+    )
+    return highlighted
+
+
+def re_words(value: str) -> list[str]:
+    import re
+
+    return re.findall(r"\b\w+\b", value.lower())
+
+
+def re_split_sentences(value: str) -> list[str]:
+    import re
+
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+", value) if part.strip()]
+
+
+def render_statement_evidence(
+    evidence_item: Optional[dict[str, Any]],
+    statement: str,
+) -> None:
+    citations = evidence_item.get("citations", []) if evidence_item else []
+    if not citations:
+        st.caption("No chunk-level evidence was stored for this statement.")
+        return
+
+    st.markdown('<div class="dk-evidence-timeline">', unsafe_allow_html=True)
+    for citation in citations:
+        paragraph = str(citation.get("relevant_paragraph", "")).strip()
+        st.markdown(
+            f"""
+            <div class="dk-evidence-card">
+              <div class="dk-evidence-card__rail"></div>
+              <div class="dk-evidence-card__body">
+                <div class="dk-evidence-card__top">
+                  <strong>{escape(str(citation.get("document", "Unknown document")))}</strong>
+                  <span>Score {float(citation.get("score", 0)):.2f}</span>
+                </div>
+                <div class="dk-evidence-meta">
+                  Page {int(citation.get("page", 0))} · Chunk {escape(str(citation.get("chunk", "unknown")))}
+                </div>
+                <details>
+                  <summary>View Evidence</summary>
+                  <p>{highlight_relevant_paragraph(paragraph, statement)}</p>
+                </details>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def comparison_list(
+    title: str,
+    items: list[Any],
+    evidence_items: Optional[list[dict[str, Any]]] = None,
+    key_prefix: str = "comparison-point",
+) -> None:
     if not items:
         st.caption(f"No {title.lower()} returned.")
         return
-    st.markdown(
-        "<ul class=\"dk-comparison-list\">"
-        + "".join(f"<li>{escape(str(item))}</li>" for item in items)
-        + "</ul>",
-        unsafe_allow_html=True,
-    )
+    for index, item in enumerate(items):
+        statement = str(item)
+        evidence_item = evidence_for_statement(evidence_items or [], statement)
+        with st.expander(statement, expanded=False):
+            st.markdown(
+                '<div class="dk-label">Supported By</div>',
+                unsafe_allow_html=True,
+            )
+            render_statement_evidence(evidence_item, statement)
 
 
-def comparison_topic_map(title: str, topic_map: dict[str, Any]) -> None:
+def comparison_topic_map(
+    title: str,
+    topic_map: dict[str, Any],
+    evidence_items: list[dict[str, Any]],
+) -> None:
     section_title(title, f"{len(topic_map)} documents")
     if not topic_map:
         empty_state("No document-specific topics", "The comparison did not return a document map.", "≋")
@@ -1095,11 +1196,25 @@ def comparison_topic_map(title: str, topic_map: dict[str, Any]) -> None:
                 """,
                 unsafe_allow_html=True,
             )
-            comparison_list("Topics", topics if isinstance(topics, list) else [])
+            statements = []
+            for topic in topics if isinstance(topics, list) else []:
+                if title == "Unique Topics":
+                    statements.append(f"{topic} is unique to {document_name}.")
+                elif title == "Missing Concepts":
+                    statements.append(f"{topic} is missing from {document_name}.")
+                else:
+                    statements.append(str(topic))
+            comparison_list(
+                "Topics",
+                statements,
+                evidence_items=evidence_items,
+                key_prefix=f"{title}-{document_name}",
+            )
 
 
 def render_comparison_result(result: dict[str, Any]) -> None:
     comparison_id = result.get("comparison_id") or result.get("id")
+    evidence_items = result.get("evidence", [])
     st.markdown(
         f"""
         <div class="dk-comparison-hero">
@@ -1131,16 +1246,32 @@ def render_comparison_result(result: dict[str, Any]) -> None:
             unsafe_allow_html=True,
         )
 
+    with st.expander("Why this overall summary?", expanded=False):
+        render_statement_evidence(
+            evidence_for_statement(evidence_items, str(result.get("overall_summary", ""))),
+            str(result.get("overall_summary", "")),
+        )
+
     summary, common = st.columns([1.2, 1], gap="large")
     with summary:
         section_title("Major Differences", "Conceptual deltas")
-        comparison_list("Major differences", result.get("major_differences", []))
+        comparison_list(
+            "Major differences",
+            result.get("major_differences", []),
+            evidence_items=evidence_items,
+            key_prefix=f"major-{comparison_id}",
+        )
     with common:
         section_title("Common Topics", "Shared ground")
-        comparison_list("Common topics", result.get("common_topics", []))
+        comparison_list(
+            "Common topics",
+            result.get("common_topics", []),
+            evidence_items=evidence_items,
+            key_prefix=f"common-{comparison_id}",
+        )
 
-    comparison_topic_map("Unique Topics", result.get("unique_topics", {}))
-    comparison_topic_map("Missing Concepts", result.get("missing_concepts", {}))
+    comparison_topic_map("Unique Topics", result.get("unique_topics", {}), evidence_items)
+    comparison_topic_map("Missing Concepts", result.get("missing_concepts", {}), evidence_items)
 
     beginner, comprehensive = st.columns(2, gap="large")
     with beginner:
@@ -1148,11 +1279,27 @@ def render_comparison_result(result: dict[str, Any]) -> None:
             st.markdown('<div class="dk-label">Beginner fit</div>', unsafe_allow_html=True)
             st.subheader(result.get("beginner_document") or "Not specified")
             st.caption("Document most suitable for first-pass learning.")
+            with st.expander("View evidence", expanded=False):
+                render_statement_evidence(
+                    evidence_for_statement(
+                        evidence_items,
+                        f"{result.get('beginner_document')} is most suitable for beginners.",
+                    ),
+                    f"{result.get('beginner_document')} is most suitable for beginners.",
+                )
     with comprehensive:
         with st.container(border=True):
             st.markdown('<div class="dk-label">Coverage</div>', unsafe_allow_html=True)
             st.subheader(result.get("most_comprehensive_document") or "Not specified")
             st.caption("Document with the broadest or deepest treatment.")
+            with st.expander("View evidence", expanded=False):
+                render_statement_evidence(
+                    evidence_for_statement(
+                        evidence_items,
+                        f"{result.get('most_comprehensive_document')} is the most comprehensive document.",
+                    ),
+                    f"{result.get('most_comprehensive_document')} is the most comprehensive document.",
+                )
 
     section_title("Final Recommendation", "Decision support")
     st.markdown(
@@ -1163,6 +1310,11 @@ def render_comparison_result(result: dict[str, Any]) -> None:
         """,
         unsafe_allow_html=True,
     )
+    with st.expander("Why this recommendation?", expanded=False):
+        render_statement_evidence(
+            evidence_for_statement(evidence_items, str(result.get("recommendation", ""))),
+            str(result.get("recommendation", "")),
+        )
 
     render_comparison_chat(result)
 
@@ -1263,6 +1415,21 @@ def render_comparison_chat(result: dict[str, Any]) -> None:
                 f"Confidence: {confidence.title()} · "
                 f"Supporting documents: {', '.join(support) if support else 'No specific support'}"
             )
+            if item.get("evidence"):
+                with st.expander("Why this answer?", expanded=False):
+                    for evidence_item in item.get("evidence", []):
+                        st.markdown(
+                            f"""
+                            <div class="dk-evidence-statement">
+                              {escape(str(evidence_item.get("statement", "")))}
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                        render_statement_evidence(
+                            evidence_item,
+                            str(evidence_item.get("statement", "")),
+                        )
             render_comparison_answer_sources(item.get("referenced_sections", []))
 
     question = st.chat_input(

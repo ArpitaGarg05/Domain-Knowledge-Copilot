@@ -561,6 +561,85 @@ p { color: var(--dk-muted); }
   background:var(--dk-primary);
   box-shadow:0 0 12px rgba(195,192,255,.42);
 }
+.dk-evidence-timeline {
+  display:grid;
+  gap:.7rem;
+  margin:.45rem 0 .3rem;
+}
+.dk-evidence-card {
+  display:grid;
+  grid-template-columns:10px minmax(0,1fr);
+  gap:.65rem;
+  align-items:stretch;
+}
+.dk-evidence-card__rail {
+  width:2px;
+  min-height:100%;
+  margin:auto;
+  border-radius:999px;
+  background:linear-gradient(var(--dk-primary), var(--dk-success));
+  box-shadow:0 0 18px rgba(195,192,255,.24);
+}
+.dk-evidence-card__body {
+  min-width:0;
+  padding:.75rem .85rem;
+  border:1px solid rgba(70,69,85,.68);
+  border-radius:10px;
+  background:linear-gradient(135deg, rgba(1,15,31,.70), rgba(13,28,45,.62));
+}
+.dk-evidence-card__top {
+  display:flex;
+  justify-content:space-between;
+  gap:.8rem;
+  align-items:center;
+}
+.dk-evidence-card__top strong {
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  color:var(--dk-text);
+  font:600 12px/1.4 "JetBrains Mono",monospace;
+}
+.dk-evidence-card__top span {
+  flex:0 0 auto;
+  color:var(--dk-success);
+  font:600 10px/1.3 "JetBrains Mono",monospace;
+}
+.dk-evidence-meta {
+  margin:.25rem 0 .55rem;
+  color:var(--dk-outline);
+  font:500 10px/1.5 "JetBrains Mono",monospace;
+}
+.dk-evidence-card details {
+  color:rgba(212,228,250,.78);
+  font-size:12px;
+  line-height:1.65;
+}
+.dk-evidence-card summary {
+  cursor:pointer;
+  color:var(--dk-primary);
+  font:600 11px/1.4 "JetBrains Mono",monospace;
+}
+.dk-evidence-card p {
+  margin:.6rem 0 0;
+  color:rgba(199,196,216,.82);
+}
+.dk-evidence-card mark {
+  color:var(--dk-text);
+  background:rgba(195,192,255,.18);
+  border-radius:4px;
+  padding:0 .15rem;
+}
+.dk-evidence-statement {
+  margin:.7rem 0 .4rem;
+  padding:.65rem .75rem;
+  border:1px solid rgba(195,192,255,.16);
+  border-radius:9px;
+  background:rgba(79,70,229,.08);
+  color:var(--dk-text);
+  font-weight:600;
+}
 .dk-comparison-doc-card {
   min-width:0;
   padding:.9rem;

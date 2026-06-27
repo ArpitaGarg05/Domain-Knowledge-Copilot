@@ -101,6 +101,7 @@ def create_comparison_question(
     answer: str,
     supporting_documents: list[str],
     referenced_sections: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
     confidence: str,
 ) -> ComparisonQuestion:
     comparison_question = ComparisonQuestion(
@@ -109,6 +110,7 @@ def create_comparison_question(
         answer=answer,
         supporting_documents=json.dumps(supporting_documents),
         referenced_sections=json.dumps(referenced_sections),
+        evidence=json.dumps(evidence),
         confidence=confidence,
     )
     db.add(comparison_question)

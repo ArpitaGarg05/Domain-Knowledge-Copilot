@@ -15,6 +15,21 @@ class ComparedDocumentResponse(BaseModel):
     corpus_name: str
 
 
+class EvidenceCitationResponse(BaseModel):
+    document: str
+    page: int
+    chunk: str
+    score: float
+    relevant_paragraph: str
+    document_id: int
+    chunk_id: int
+
+
+class EvidenceStatementResponse(BaseModel):
+    statement: str
+    citations: list[EvidenceCitationResponse] = Field(default_factory=list)
+
+
 class ComparisonStructuredResponse(BaseModel):
     common_topics: list[str] = Field(default_factory=list)
     unique_topics: dict[str, list[str]] = Field(default_factory=dict)
@@ -23,6 +38,7 @@ class ComparisonStructuredResponse(BaseModel):
     beginner_document: str = ""
     most_comprehensive_document: str = ""
     recommendation: str = ""
+    evidence: list[EvidenceStatementResponse] = Field(default_factory=list)
 
 
 class ComparisonCreateResponse(ComparisonStructuredResponse):
@@ -34,6 +50,7 @@ class ComparisonListItemResponse(BaseModel):
     id: int
     title: str
     overall_summary: str
+    evidence: list[EvidenceStatementResponse] = Field(default_factory=list)
     document_count: int
     documents: list[ComparedDocumentResponse]
     created_at: datetime
@@ -53,6 +70,8 @@ class ReferencedSectionResponse(BaseModel):
     page_number: int
     chunk_reference: str
     text: str
+    chunk_id: Optional[int] = None
+    score: Optional[float] = None
 
 
 class ComparisonQuestionResponse(BaseModel):
@@ -61,6 +80,7 @@ class ComparisonQuestionResponse(BaseModel):
     answer: str
     supporting_documents: list[str]
     referenced_sections: list[ReferencedSectionResponse]
+    evidence: list[EvidenceStatementResponse] = Field(default_factory=list)
     confidence: str
     created_at: Optional[datetime] = None
 
@@ -69,6 +89,7 @@ class ComparisonAskResponse(BaseModel):
     answer: str
     supporting_documents: list[str]
     referenced_sections: list[ReferencedSectionResponse]
+    evidence: list[EvidenceStatementResponse] = Field(default_factory=list)
     confidence: str
     created_at: Optional[datetime] = None
 

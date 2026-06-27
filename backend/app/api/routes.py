@@ -238,6 +238,7 @@ def build_comparison_create_response(comparison) -> ComparisonCreateResponse:
             comparison_json.get("most_comprehensive_document", ""),
         ),
         recommendation=str(comparison_json.get("recommendation", "")),
+        evidence=list(comparison_json.get("evidence", [])),
     )
 
 
@@ -252,6 +253,7 @@ def build_comparison_list_item(comparison) -> ComparisonListItemResponse:
         id=comparison.id,
         title=comparison.title,
         overall_summary=str(comparison_json.get("overall_summary", "")),
+        evidence=list(comparison_json.get("evidence", [])),
         document_count=len(documents),
         documents=documents,
         created_at=comparison.created_at,
@@ -274,6 +276,11 @@ def build_comparison_question_response(question) -> ComparisonQuestionResponse:
         answer=question.answer,
         supporting_documents=supporting_documents,
         referenced_sections=referenced_sections,
+        evidence=[
+            statement
+            for statement in comparison_crud.parse_json_list(question.evidence)
+            if isinstance(statement, dict)
+        ],
         confidence=question.confidence,
         created_at=question.created_at,
     )
@@ -471,6 +478,7 @@ def ask_comparison_question(
         answer=generated.answer,
         supporting_documents=generated.supporting_documents,
         referenced_sections=generated.referenced_sections,
+        evidence=generated.evidence,
         confidence=generated.confidence,
     )
     response = build_comparison_question_response(saved_question)
@@ -478,6 +486,7 @@ def ask_comparison_question(
         answer=response.answer,
         supporting_documents=response.supporting_documents,
         referenced_sections=response.referenced_sections,
+        evidence=response.evidence,
         confidence=response.confidence,
         created_at=response.created_at,
     )

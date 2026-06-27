@@ -160,11 +160,100 @@ class VectorStoreService:
 
         return retrieved
 
+    def retrieve_evidence_for_texts(
+        self,
+        documents_by_corpus: dict[int, list[int]],
+        texts: list[str],
+        limit_per_statement: int = 3,
+    ) -> dict[int, list[RetrievalResult]]:
+        chunks = [
+            TextChunk(page_number=0, chunk_index=index, text=text)
+            for index, text in enumerate(texts)
+            if text.strip()
+        ]
+        embeddings = EmbeddingService().embed_chunks(chunks)
+        if not embeddings:
+            return {}
+
+        evidence: dict[int, list[RetrievalResult]] = {
+            embedding.chunk_index: [] for embedding in embeddings
+        }
+        query_embeddings = [embedding.vector for embedding in embeddings]
+        embedding_indexes = [embedding.chunk_index for embedding in embeddings]
+
+        for corpus_id, document_ids in documents_by_corpus.items():
+            unique_document_ids = list(dict.fromkeys(document_ids))
+            collection = self.get_or_create_collection(corpus_id)
+            where_filter = (
+                {"document_id": unique_document_ids[0]}
+                if len(unique_document_ids) == 1
+                else {"document_id": {"$in": unique_document_ids}}
+            )
+            result = collection.query(
+                query_embeddings=query_embeddings,
+                n_results=max(limit_per_statement, limit_per_statement * len(unique_document_ids)),
+                where=where_filter,
+                include=["documents", "metadatas", "distances"],
+            )
+            for position, statement_index in enumerate(embedding_indexes):
+                evidence[statement_index].extend(
+                    self._format_result_group(result, position)[:limit_per_statement]
+                )
+
+        for statement_index, results in evidence.items():
+            evidence[statement_index] = sorted(
+                results,
+                key=lambda item: item.distance if item.distance is not None else 1_000_000,
+            )[:limit_per_statement]
+
+        return evidence
+
     def _format_results(self, result: dict) -> list[RetrievalResult]:
         documents = result.get("documents", [[]])[0]
         metadatas = result.get("metadatas", [[]])[0]
         distances = result.get("distances", [[]])[0]
 
+        formatted_results: list[RetrievalResult] = []
+        for text, metadata, distance in zip(documents, metadatas, distances, strict=True):
+            formatted_results.append(
+                RetrievalResult(
+                    chunk_id=int(metadata["chunk_id"]),
+                    document_id=int(metadata["document_id"]),
+                    corpus_id=int(metadata["corpus_id"]),
+                    filename=str(metadata.get("filename", "Unknown file")),
+                    page_number=int(metadata["page_number"]),
+                    chunk_index=int(metadata["chunk_index"]),
+                    chunk_reference=str(
+                        metadata.get(
+                            "chunk_reference",
+                            self.chunk_vector_id(int(metadata["chunk_id"])),
+                        )
+                    ),
+                    text=text,
+                    distance=distance,
+                )
+            )
+
+        return formatted_results
+
+    def _format_result_group(self, result: dict, position: int) -> list[RetrievalResult]:
+        documents = result.get("documents", [])
+        metadatas = result.get("metadatas", [])
+        distances = result.get("distances", [])
+        if position >= len(documents):
+            return []
+        return self._format_result_rows(
+            documents[position],
+            metadatas[position],
+            distances[position],
+        )
+
+    def _format_result_rows(
+        self,
+        documents: list[str],
+        metadatas: list[dict],
+        distances: list[Optional[float]],
+    ) -> list[RetrievalResult]:
         formatted_results: list[RetrievalResult] = []
         for text, metadata, distance in zip(documents, metadatas, distances, strict=True):
             formatted_results.append(

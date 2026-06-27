@@ -76,6 +76,7 @@ class ComparisonQuestion(Base):
     answer: Mapped[str] = mapped_column(Text, default="")
     supporting_documents: Mapped[str] = mapped_column(Text, default="[]")
     referenced_sections: Mapped[str] = mapped_column(Text, default="[]")
+    evidence: Mapped[str] = mapped_column(Text, default="[]")
     confidence: Mapped[str] = mapped_column(String(50), default="medium")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
