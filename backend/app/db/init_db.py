@@ -32,10 +32,14 @@ def run_migrations() -> None:
         logger.info("Fresh database schema created and stamped at Alembic head.")
         return
 
-    logger.info("Running Alembic migrations.")
+    logger.info("===== Starting Alembic migrations =====")
+
     try:
+        logger.info("Before command.upgrade()")
         command.upgrade(config, "head")
+        logger.info("After command.upgrade()")
     except Exception:
         logger.exception("Alembic migration failed.")
         raise
-    logger.info("Alembic migrations complete.")
+
+    logger.info("===== Alembic migrations complete =====")

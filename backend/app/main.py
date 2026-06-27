@@ -6,12 +6,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
 from app.db.init_db import run_migrations
+import logging
 
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI):
+    logger.info("===== Application startup =====")
+
+    logger.info("Calling run_migrations()")
     run_migrations()
+
+    logger.info("run_migrations() finished")
+
     yield
+
+    logger.info("Application shutting down")
 
 
 app = FastAPI(
