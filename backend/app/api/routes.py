@@ -276,14 +276,33 @@ def build_comparison_question_response(question) -> ComparisonQuestionResponse:
         answer=question.answer,
         supporting_documents=supporting_documents,
         referenced_sections=referenced_sections,
-        evidence=[
-            statement
-            for statement in comparison_crud.parse_json_list(question.evidence)
-            if isinstance(statement, dict)
-        ],
+        evidence=build_evidence_from_referenced_sections(
+            statement=question.answer,
+            sections=[section.model_dump() for section in referenced_sections],
+        ),
         confidence=question.confidence,
         created_at=question.created_at,
     )
+
+
+def build_evidence_from_referenced_sections(
+    statement: str,
+    sections: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    citations = []
+    for section in sections:
+        citations.append(
+            {
+                "document": str(section.get("filename", "Unknown document")),
+                "page": int(section.get("page_number") or 0),
+                "chunk": str(section.get("chunk_reference", "unknown")),
+                "score": float(section.get("score") or 0),
+                "relevant_paragraph": str(section.get("text", "")),
+                "document_id": int(section.get("document_id") or 0),
+                "chunk_id": int(section.get("chunk_id") or 0),
+            }
+        )
+    return [{"statement": statement, "citations": citations}] if citations else []
 
 
 def build_comparison_detail_response(comparison) -> ComparisonDetailResponse:
@@ -478,7 +497,6 @@ def ask_comparison_question(
         answer=generated.answer,
         supporting_documents=generated.supporting_documents,
         referenced_sections=generated.referenced_sections,
-        evidence=generated.evidence,
         confidence=generated.confidence,
     )
     response = build_comparison_question_response(saved_question)
@@ -486,7 +504,7 @@ def ask_comparison_question(
         answer=response.answer,
         supporting_documents=response.supporting_documents,
         referenced_sections=response.referenced_sections,
-        evidence=response.evidence,
+        evidence=generated.evidence,
         confidence=response.confidence,
         created_at=response.created_at,
     )
