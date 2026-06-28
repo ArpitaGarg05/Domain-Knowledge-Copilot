@@ -752,6 +752,14 @@ p { color: var(--dk-muted); }
   background:linear-gradient(145deg,rgba(18,33,49,.96),rgba(13,28,45,.90));
   box-shadow:0 30px 80px rgba(1,15,31,.35), inset 0 1px 0 rgba(212,228,250,.04);
 }
+.st-key-auth_card [data-testid="InputInstructions"],
+.st-key-auth_card [data-testid="stWidgetInstructions"] {
+  margin-left:0 !important;
+  padding-left:0 !important;
+  text-align:left !important;
+  color:rgba(145,143,161,.72) !important;
+  font-size:11px !important;
+}
 .dk-system-strip {
   width:min(100%,900px); margin:1.2rem auto 0; padding:.65rem .85rem;
   display:flex; justify-content:space-between; gap:1rem;

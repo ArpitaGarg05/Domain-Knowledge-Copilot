@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from datetime import datetime, timedelta
@@ -48,6 +49,8 @@ st.session_state.setdefault("comfortable_density", True)
 st.session_state.setdefault("reduce_motion", False)
 st.session_state.setdefault("default_workspace", "Corpus Dashboard")
 st.session_state.setdefault("auth_tab", "Login")
+if st.session_state.auth_tab == "Sign-Up":
+    st.session_state.auth_tab = "Sign Up"
 cookie_manager = stx.CookieManager(key="auth_cookie_manager")
 
 
@@ -317,7 +320,7 @@ def render_auth_loading() -> None:
         <div class="dk-auth-loading">
           <div class="dk-auth-loading__mark">◇</div>
           <h2>Restoring secure session</h2>
-          <p>Validating identity · Hydrating workspace</p>
+          <p>Checking your account · Loading your workspace</p>
           <div class="dk-auth-loading__bar"></div>
         </div>
         """,
@@ -394,15 +397,59 @@ def selected_corpus(corpora: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
 
 
 def render_api_error(error: requests.RequestException) -> None:
-    detail = str(error)
+    detail = "Something went wrong. Please try again."
     if isinstance(error, requests.Timeout):
         detail = "The service took too long to respond."
     elif isinstance(error, requests.HTTPError) and error.response is not None:
         try:
-            detail = error.response.json().get("detail", detail)
+            payload = error.response.json()
+            detail = humanize_api_error(payload.get("detail", detail))
         except ValueError:
-            detail = error.response.text.strip() or detail
+            detail = humanize_api_error(error.response.text.strip() or detail)
+    elif str(error):
+        detail = humanize_api_error(str(error))
     st.error(detail)
+
+
+def humanize_api_error(detail: Any) -> str:
+    if isinstance(detail, dict):
+        if "msg" in detail:
+            return humanize_api_error(detail["msg"])
+        if "message" in detail:
+            return humanize_api_error(detail["message"])
+        if "detail" in detail:
+            return humanize_api_error(detail["detail"])
+        return "Please check your input and try again."
+
+    if isinstance(detail, list):
+        messages = []
+        for item in detail:
+            if isinstance(item, dict):
+                location = item.get("loc", [])
+                field = str(location[-1]).replace("_", " ") if location else "Input"
+                message = str(item.get("msg", "is invalid"))
+                messages.append(f"{field.title()} {message}.")
+            else:
+                messages.append(str(item))
+        return " ".join(messages) if messages else "Please check your input."
+
+    message = str(detail).strip()
+    if not message:
+        return "Something went wrong. Please try again."
+    if message.startswith("{") and "detail" in message:
+        try:
+            return humanize_api_error(json.loads(message).get("detail"))
+        except (ValueError, AttributeError):
+            pass
+
+    normalized = message.lower()
+    if "invalid email or password" in normalized or "incorrect username or password" in normalized:
+        return "Incorrect email or password."
+    if "user with this email already exists" in normalized or "already exists" in normalized:
+        return "An account with this email already exists."
+    if "field required" in normalized:
+        return "Please complete all required fields."
+    return message.rstrip(".") + "."
 
 
 def set_auth_tab(tab: str) -> None:
@@ -414,7 +461,7 @@ def render_auth_page() -> None:
         """
         <div class="dk-auth-shell">
           <h1>Knowledge Co-Pilot</h1>
-          <p>● &nbsp; Precision Intelligence Secured</p>
+          <p>● &nbsp; Your document assistant</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -426,18 +473,18 @@ def render_auth_page() -> None:
             st.markdown('<div class="dk-auth-marker"></div>', unsafe_allow_html=True)
             auth_tab = st.segmented_control(
                 "Authentication",
-                ["Login", "Sign-Up"],
+                ["Login", "Sign Up"],
                 key="auth_tab",
                 label_visibility="collapsed",
                 width="stretch",
             )
 
             if auth_tab == "Login":
-                st.caption("Authenticate to enter the research environment.")
+                st.caption("Log in to continue.")
                 with st.form("login-form"):
                     email = st.text_input(
                         "Email",
-                        placeholder="name@corporation.com",
+                        placeholder="name@example.com",
                     )
                     password = st.text_input(
                         "Password",
@@ -451,22 +498,22 @@ def render_auth_page() -> None:
                     )
                 if submitted:
                     try:
-                        with st.spinner("Establishing secure session..."):
+                        with st.spinner("Logging in..."):
                             auth_response = login_user(email.strip(), password)
                         store_auth_session(auth_response)
                         st.rerun()
                     except requests.RequestException as error:
                         render_api_error(error)
                 st.button(
-                    "Don't have an account? Register",
+                    "Don't have an account? Sign Up",
                     key="auth_show_signup",
                     use_container_width=True,
                     on_click=set_auth_tab,
-                    args=("Sign-Up",),
+                    args=("Sign Up",),
                 )
 
             else:
-                st.caption("Initialize your secure research environment.")
+                st.caption("Create your account to get started.")
                 with st.form("register-form"):
                     display_name = st.text_input(
                         "User name",
@@ -484,13 +531,13 @@ def render_auth_page() -> None:
                         key="register_password",
                     )
                     submitted = st.form_submit_button(
-                        "Register",
+                        "Sign Up",
                         type="primary",
                         use_container_width=True,
                     )
                 if submitted:
                     try:
-                        with st.spinner("Provisioning account..."):
+                        with st.spinner("Signing up..."):
                             auth_response = register_user(
                                 email.strip(),
                                 display_name.strip(),
@@ -511,8 +558,8 @@ def render_auth_page() -> None:
     st.markdown(
         """
         <div class="dk-system-strip">
-          <span><b>● Server core active</b></span>
-          <span>Encrypted transport · Session isolation</span>
+          <span><b>● App ready</b></span>
+          <span>Secure connection · Saved session</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -582,7 +629,7 @@ def render_sidebar(corpora: list[dict[str, Any]]) -> str:
             <div class="dk-user">
               <div class="dk-avatar">{initial}</div>
               <div>
-                <strong>{escape(str(user.get("display_name", "Operator")))}</strong>
+                <strong>{escape(str(user.get("display_name", "User")))}</strong>
                 <span>{escape(str(user.get("email", "")))}</span>
               </div>
             </div>
@@ -608,7 +655,7 @@ def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
               <p>{escape(str(corpus.get("description") or "No description supplied."))}</p>
               <div class="dk-corpus-card__footer">
                 <span>{int(corpus["document_count"]):02d} documents</span>
-                <span>Private workspace</span>
+                <span>Workspace</span>
               </div>
             </div>
             """,
@@ -625,10 +672,10 @@ def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
 
 def render_create_corpus(form_key: str) -> None:
     with st.container(border=True):
-        st.markdown('<div class="dk-label">Provision corpus</div>', unsafe_allow_html=True)
+        st.markdown('<div class="dk-label">Create corpus</div>', unsafe_allow_html=True)
         st.subheader("Create a knowledge workspace")
         with st.form(form_key, clear_on_submit=True):
-            name = st.text_input("Corpus name", placeholder="Research intelligence")
+            name = st.text_input("Corpus name", placeholder="Project documents")
             description = st.text_area(
                 "Description",
                 placeholder="What domain knowledge will this corpus contain?",
@@ -655,11 +702,11 @@ def render_dashboard(corpora: list[dict[str, Any]]) -> None:
     page_header(
         "Knowledge workspace",
         "Corpus Dashboard",
-        "Organize private document collections and monitor the intelligence layer.",
+        "Organize your documents and access them whenever you need.",
     )
     metric_grid(
         [
-            ("Active corpora", str(len(corpora)), "Private research spaces", "primary"),
+            ("Active corpora", str(len(corpora)), "Document workspaces", "primary"),
             (
                 "Indexed documents",
                 str(sum(int(c["document_count"]) for c in corpora)),
@@ -675,7 +722,7 @@ def render_dashboard(corpora: list[dict[str, Any]]) -> None:
     section_title("Knowledge corpora", f"{len(corpora)} workspaces")
     if not corpora:
         empty_state(
-            "No corpora provisioned",
+            "No corpora yet",
             "Create a corpus to begin indexing domain documents.",
             "＋",
         )
@@ -729,12 +776,12 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
     page_header(
         f"Corpus {int(corpus['id']):02d} / Active",
         str(corpus["name"]),
-        str(corpus.get("description") or "Private domain knowledge corpus."),
+        str(corpus.get("description") or "Domain knowledge corpus."),
     )
     metrics = [
         ("Documents", str(detail["total_documents"]), "Uploaded source files", "primary"),
         ("Pages", f'{int(detail["total_pages"]):,}', "Extracted and searchable", None),
-        ("Vector chunks", f'{int(detail["total_embeddings"]):,}', "Available for retrieval", "success"),
+        ("Search sections", f'{int(detail["total_embeddings"]):,}', "Ready for search", "success"),
         ("Storage", format_bytes(int(detail["total_storage_bytes"])), "Uploaded PDF footprint", None),
     ]
     metric_grid(metrics)
@@ -753,15 +800,15 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
             )
 
     with action:
-        section_title("Data ingestion", "PDF pipeline")
+        section_title("Add documents", "Upload PDFs")
         with st.container(border=True):
             st.markdown(
                 """
                 <div class="dk-label">Upload action area</div>
                 <h3 style="margin:.45rem 0 .25rem">Index new material</h3>
                 <p style="font-size:13px;margin:0 0 .8rem">
-                  Text is extracted page-by-page, chunked, embedded, and added
-                  to this corpus's private vector collection.
+                  Text is extracted page-by-page, processed, and made searchable
+                  in this corpus.
                 </p>
                 """,
                 unsafe_allow_html=True,
@@ -792,19 +839,19 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
         with st.container(border=True):
             st.markdown(
                 f"""
-                <div class="dk-label">Index health</div>
-                <h3 style="margin:.45rem 0 .75rem">Retrieval readiness</h3>
+                <div class="dk-label">Document status</div>
+                <h3 style="margin:.45rem 0 .75rem">Search readiness</h3>
                 <div style="display:grid;gap:.7rem">
                   <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1;font-size:12px">Vector store</span>
+                    <span style="color:#918fa1;font-size:12px">Search index</span>
                     {status_badge("Connected")}
                   </div>
                   <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1;font-size:12px">Embeddings</span>
+                    <span style="color:#918fa1;font-size:12px">Indexed sections</span>
                     <code style="color:#c3c0ff">{int(detail["total_embeddings"]):,}</code>
                   </div>
                   <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1;font-size:12px">Isolation</span>
+                    <span style="color:#918fa1;font-size:12px">Corpus ID</span>
                     <code style="color:#d4e4fa">corpus_{int(corpus["id"])}</code>
                   </div>
                 </div>
@@ -820,7 +867,7 @@ def render_citations(sources: list[dict[str, Any]]) -> None:
         f"""
         <div class="dk-section-title" style="margin:.9rem 0 .45rem">
           <h2 style="font-size:14px">Retrieved sources</h2>
-          <span>{len(sources)} evidence chunks · retrieval complete</span>
+          <span>{len(sources)} sources found</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -835,7 +882,7 @@ def render_citations(sources: list[dict[str, Any]]) -> None:
                   <div class="dk-source-index">[{index:02d}]</div>
                   <div class="dk-source-copy">
                     <strong>{escape(str(source.get("filename", "Unknown source")))}</strong>
-                    <p>Retrieved source evidence</p>
+                    <p>Source evidence</p>
                   </div>
                   <span class="dk-page-chip">PAGE {int(source.get("page_number", 0))}</span>
                 </div>
@@ -853,14 +900,14 @@ def render_citations(sources: list[dict[str, Any]]) -> None:
 def render_chat(corpora: list[dict[str, Any]]) -> None:
     corpus = selected_corpus(corpora)
     if corpus is None:
-        page_header("Research interface", "Corpus Chat", "Ask grounded questions.")
-        empty_state("No active corpus", "Create and index a corpus before starting research.")
+        page_header("Document chat", "Corpus Chat", "Ask questions about your documents.")
+        empty_state("No active corpus", "Create and index a corpus before chatting.")
         return
 
     page_header(
-        "Research interface / Grounded mode",
+        "Document chat",
         f"Chat with {corpus['name']}",
-        "Answers are constrained to retrieved corpus evidence and include page-level citations.",
+        "Answers use your uploaded documents and include page-level citations.",
     )
 
     conversation_id = st.session_state.get("active_conversation_id")
@@ -886,7 +933,7 @@ def render_chat(corpora: list[dict[str, Any]]) -> None:
         with st.chat_message("assistant"):
             st.write(
                 "The corpus is connected. Ask a question and I’ll retrieve the "
-                "most relevant source chunks before answering."
+                "most relevant sources before answering."
             )
 
     for message in messages:
@@ -900,7 +947,7 @@ def render_chat(corpora: list[dict[str, Any]]) -> None:
     question = st.chat_input(f"Query {corpus['name']}…")
     if question:
         try:
-            with st.spinner("Retrieving evidence and synthesizing answer..."):
+            with st.spinner("Finding sources and writing an answer..."):
                 response = answer_question(
                     int(corpus["id"]),
                     question,
@@ -1326,7 +1373,7 @@ def render_comparison_answer_sources(sections: list[dict[str, Any]]) -> None:
         f"""
         <div class="dk-section-title" style="margin:.9rem 0 .45rem">
           <h2 style="font-size:14px">Referenced sections</h2>
-          <span>{len(sections)} grounded chunks</span>
+          <span>{len(sections)} source sections</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1568,22 +1615,21 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
     page_header(
         "Account control",
         "Settings",
-        "Manage operator identity, interface behavior, and session preferences.",
+        "Manage your profile, interface behavior, and workspace preferences.",
     )
 
     profile, preferences = st.columns(2, gap="large")
     with profile:
         with st.container(border=True):
             st.markdown('<div class="dk-label">Profile</div>', unsafe_allow_html=True)
-            st.subheader("Operator identity")
-            st.caption("Identity attached to private corpora and chat history.")
+            st.subheader("User identity")
             with st.form("profile-form"):
                 display_name = st.text_input(
                     "Display name",
                     value=str(user.get("display_name", "")),
                 )
                 st.text_input(
-                    "Corporate email",
+                    "Email",
                     value=str(user.get("email", "")),
                     disabled=True,
                 )
@@ -1596,61 +1642,18 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
                 try:
                     updated = update_profile(display_name.strip())
                     st.session_state.current_user = updated
-                    st.success("Operator profile updated.")
+                    st.success("User profile updated.")
                     st.rerun()
                 except requests.RequestException as error:
                     render_api_error(error)
 
         with st.container(border=True):
-            st.markdown('<div class="dk-label">Security</div>', unsafe_allow_html=True)
-            st.subheader("Session controls")
-            st.markdown(
-                f"""
-                <div style="display:grid;gap:.7rem;margin:.7rem 0 1rem">
-                  <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1">API connection</span>
-                    {status_badge("Connected")}
-                  </div>
-                  <div style="display:flex;justify-content:space-between;gap:1rem">
-                    <span style="color:#918fa1">Endpoint</span>
-                    <code style="color:#c3c0ff;overflow:hidden;text-overflow:ellipsis">{escape(API_BASE_URL)}</code>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button("End Current Session", use_container_width=True):
-                clear_auth_session()
-                st.rerun()
-
-    with preferences:
-        with st.container(border=True):
-            st.markdown('<div class="dk-label">Interface</div>', unsafe_allow_html=True)
-            st.subheader("Research preferences")
-            st.caption("Preferences apply immediately to this browser session.")
-            st.toggle(
-                "Comfortable information density",
-                key="comfortable_density",
-                help="Reserve more breathing room around long-form content.",
-            )
-            st.toggle(
-                "Reduce interface motion",
-                key="reduce_motion",
-                help="Minimize decorative transitions and status animation.",
-            )
-            st.selectbox(
-                "Default workspace",
-                ["Corpus Dashboard", "Corpus Chat", "Compare Documents", "Chat History"],
-                key="default_workspace",
-            )
-
-        with st.container(border=True):
             st.markdown('<div class="dk-label">Workspace data</div>', unsafe_allow_html=True)
             st.subheader("Corpus footprint")
-            st.caption("Account-scoped resources visible to the current operator.")
+            st.caption("Documents and corpora available in your workspace.")
             metric_grid(
                 [
-                    ("Corpora", str(len(corpora)), "Private workspaces", "primary"),
+                    ("Corpora", str(len(corpora)), "Workspaces", "primary"),
                     (
                         "Documents",
                         str(sum(int(c["document_count"]) for c in corpora)),
@@ -1668,7 +1671,7 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
                       <div class="dk-label">Danger zone</div>
                       <p style="font-size:12px;margin:.4rem 0 .8rem">
                         Permanently remove <strong>{escape(str(corpus["name"]))}</strong>,
-                        its documents, chat messages, and vector collection.
+                        its documents, chat messages, and saved search data.
                       </p>
                     </div>
                     """,
@@ -1690,6 +1693,27 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
                         st.rerun()
                     except requests.RequestException as error:
                         render_api_error(error)
+
+    with preferences:
+        with st.container(border=True):
+            st.markdown('<div class="dk-label">Interface</div>', unsafe_allow_html=True)
+            st.subheader("Interface preferences")
+            st.caption("Preferences apply immediately to this browser session.")
+            st.toggle(
+                "Comfortable information density",
+                key="comfortable_density",
+                help="Reserve more breathing room around long-form content.",
+            )
+            st.toggle(
+                "Reduce interface motion",
+                key="reduce_motion",
+                help="Minimize decorative transitions and status animation.",
+            )
+            st.selectbox(
+                "Default workspace",
+                ["Corpus Dashboard", "Corpus Chat", "Compare Documents", "Chat History"],
+                key="default_workspace",
+            )
 
 
 if not require_authenticated_user():
