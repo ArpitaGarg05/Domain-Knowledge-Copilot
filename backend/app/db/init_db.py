@@ -13,7 +13,6 @@ from app.models import chat_message, comparison, corpus, document, user
 
 logger = logging.getLogger(__name__)
 
-COMPARISON_EVIDENCE_NOOP_REVISION = "0011_add_comparison_question_evidence"
 COMPARISON_QUESTIONS_REVISION = "0010_add_comparison_questions"
 
 
@@ -39,10 +38,8 @@ def run_migrations() -> None:
     current_revision = get_current_revision()
     if current_revision == COMPARISON_QUESTIONS_REVISION:
         logger.info(
-            "Stamping no-op comparison evidence migration without running DDL.",
+            "Skipping no-op comparison evidence migration at startup.",
         )
-        command.stamp(config, COMPARISON_EVIDENCE_NOOP_REVISION)
-        logger.info("Database stamped at Alembic head.")
         return
 
     logger.info("Running Alembic migrations.")
