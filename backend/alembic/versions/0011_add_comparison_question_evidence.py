@@ -17,29 +17,43 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == "postgresql":
+        op.execute(
+            sa.text(
+                "ALTER TABLE comparison_questions "
+                "ADD COLUMN IF NOT EXISTS evidence TEXT"
+            )
+        )
+        return
+
     connection = op.get_bind()
     inspector = sa.inspect(connection)
     columns = {
-        column["name"]
-        for column in inspector.get_columns("comparison_questions")
+        column["name"] for column in inspector.get_columns("comparison_questions")
     }
     if "evidence" in columns:
         return
-
     op.add_column(
         "comparison_questions",
-        sa.Column("evidence", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("evidence", sa.Text(), nullable=True),
     )
 
 
 def downgrade() -> None:
+    if op.get_context().dialect.name == "postgresql":
+        op.execute(
+            sa.text(
+                "ALTER TABLE comparison_questions "
+                "DROP COLUMN IF EXISTS evidence"
+            )
+        )
+        return
+
     connection = op.get_bind()
     inspector = sa.inspect(connection)
     columns = {
-        column["name"]
-        for column in inspector.get_columns("comparison_questions")
+        column["name"] for column in inspector.get_columns("comparison_questions")
     }
     if "evidence" not in columns:
         return
-
     op.drop_column("comparison_questions", "evidence")
