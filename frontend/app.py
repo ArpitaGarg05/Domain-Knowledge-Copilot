@@ -815,7 +815,7 @@ def document_row(document: dict[str, Any]) -> None:
             </div>
           </div>
           <div class="dk-doc-stat"><label>Pages</label><span>{int(document["page_count"])}</span></div>
-          <div class="dk-doc-stat"><label>Chunks</label><span>{int(document["chunk_count"])}</span></div>
+          <div class="dk-doc-stat"><label>Sections</label><span>{int(document["chunk_count"])}</span></div>
           <div class="dk-doc-stat"><label>Storage</label><span>{escape(format_bytes(int(document["file_size_bytes"])))}</span></div>
           <div>{status_badge(status)}</div>
         </div>
@@ -910,7 +910,7 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
                         document = upload_pdf(int(corpus["id"]), uploaded_pdf)
                     st.success(
                         f"{document['filename']} indexed into "
-                        f"{document['chunk_count']} chunks."
+                        f"{document['chunk_count']} searchable sections."
                     )
                     st.session_state.upload_nonce += 1
                     st.rerun()
@@ -951,7 +951,7 @@ def render_citations(sources: list[dict[str, Any]]) -> None:
             st.caption(
                 f"Source document: {source.get('filename', 'Unknown source')} · "
                 f"Page {source.get('page_number', 0)} · "
-                f"Chunk {source.get('chunk_reference', source.get('chunk_index'))}"
+                f"Section {source.get('chunk_reference', source.get('chunk_index'))}"
             )
 
 
@@ -1230,7 +1230,7 @@ def render_statement_evidence(
 ) -> None:
     citations = evidence_item.get("citations", []) if evidence_item else []
     if not citations:
-        st.caption("No chunk-level evidence was stored for this statement.")
+        st.caption("No saved evidence for this statement.")
         return
 
     st.markdown('<div class="dk-evidence-timeline">', unsafe_allow_html=True)
@@ -1246,7 +1246,7 @@ def render_statement_evidence(
                   <span>Score {float(citation.get("score", 0)):.2f}</span>
                 </div>
                 <div class="dk-evidence-meta">
-                  Page {int(citation.get("page", 0))} · Chunk {escape(str(citation.get("chunk", "unknown")))}
+                  Page {int(citation.get("page", 0))} · Section {escape(str(citation.get("chunk", "unknown")))}
                 </div>
                 <details>
                   <summary>View Evidence</summary>
@@ -1272,12 +1272,30 @@ def comparison_list(
     for index, item in enumerate(items):
         statement = str(item)
         evidence_item = evidence_for_statement(evidence_items or [], statement)
-        with st.expander(statement, expanded=False):
-            st.markdown(
-                '<div class="dk-label">Supported By</div>',
-                unsafe_allow_html=True,
-            )
-            render_statement_evidence(evidence_item, statement)
+        st.markdown(
+            f"""
+            <div class="dk-simple-point">
+              <span>•</span>
+              <p>{escape(statement)}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if evidence_item:
+            with st.expander("View evidence", expanded=False):
+                render_statement_evidence(evidence_item, statement)
+
+
+def render_topic_tags(topics: list[Any]) -> None:
+    if not topics:
+        st.caption("No common topics returned.")
+        return
+    st.markdown(
+        '<div class="dk-topic-tags">'
+        + "".join(f"<span>{escape(str(topic))}</span>" for topic in topics)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def comparison_topic_map(
@@ -1285,17 +1303,15 @@ def comparison_topic_map(
     topic_map: dict[str, Any],
     evidence_items: list[dict[str, Any]],
 ) -> None:
-    section_title(title, f"{len(topic_map)} documents")
     if not topic_map:
-        empty_state("No document-specific topics", "The comparison did not return a document map.", "≋")
+        st.caption("No document-specific topics returned.")
         return
     columns = st.columns(2)
     for index, (document_name, topics) in enumerate(topic_map.items()):
         with columns[index % 2]:
             st.markdown(
                 f"""
-                <div class="dk-comparison-doc-card">
-                  <span class="dk-chip">Document</span>
+                <div class="dk-unique-topic-card">
                   <h3 title="{escape(str(document_name))}">{escape(str(document_name))}</h3>
                 </div>
                 """,
@@ -1324,8 +1340,7 @@ def render_comparison_result(result: dict[str, Any]) -> None:
         f"""
         <div class="dk-comparison-hero">
           <div>
-            <span class="dk-chip">Comparison {int(comparison_id):02d}</span>
-            <h2>{escape(str(result.get("title") or "Document comparison"))}</h2>
+            <h2>Step 2 · Comparison Summary</h2>
             <p>{escape(str(result.get("overall_summary") or "No summary returned."))}</p>
           </div>
         </div>
@@ -1335,7 +1350,6 @@ def render_comparison_result(result: dict[str, Any]) -> None:
 
     documents = result.get("documents", [])
     if documents:
-        section_title("Compared documents", f"{len(documents)} selected")
         st.markdown(
             "<div class=\"dk-comparison-docs\">"
             + "".join(
@@ -1357,60 +1371,35 @@ def render_comparison_result(result: dict[str, Any]) -> None:
             str(result.get("overall_summary", "")),
         )
 
-    summary, common = st.columns([1.2, 1], gap="large")
-    with summary:
-        section_title("Major Differences", "Conceptual deltas")
-        comparison_list(
-            "Major differences",
-            result.get("major_differences", []),
-            evidence_items=evidence_items,
-            key_prefix=f"major-{comparison_id}",
-        )
-    with common:
-        section_title("Common Topics", "Shared ground")
-        comparison_list(
-            "Common topics",
-            result.get("common_topics", []),
-            evidence_items=evidence_items,
-            key_prefix=f"common-{comparison_id}",
-        )
+    section_title("Step 3 · Key Differences")
+    comparison_list(
+        "Key differences",
+        result.get("major_differences", []),
+        evidence_items=evidence_items,
+        key_prefix=f"major-{comparison_id}",
+    )
 
+    section_title("Step 4 · Common Topics")
+    render_topic_tags(result.get("common_topics", []))
+
+    section_title("Step 5 · Unique Topics")
     comparison_topic_map("Unique Topics", result.get("unique_topics", {}), evidence_items)
-    comparison_topic_map("Missing Concepts", result.get("missing_concepts", {}), evidence_items)
 
-    beginner, comprehensive = st.columns(2, gap="large")
-    with beginner:
-        with st.container(border=True):
-            st.markdown('<div class="dk-label">Beginner fit</div>', unsafe_allow_html=True)
-            st.subheader(result.get("beginner_document") or "Not specified")
-            st.caption("Document most suitable for first-pass learning.")
-            with st.expander("View evidence", expanded=False):
-                render_statement_evidence(
-                    evidence_for_statement(
-                        evidence_items,
-                        f"{result.get('beginner_document')} is most suitable for beginners.",
-                    ),
-                    f"{result.get('beginner_document')} is most suitable for beginners.",
-                )
-    with comprehensive:
-        with st.container(border=True):
-            st.markdown('<div class="dk-label">Coverage</div>', unsafe_allow_html=True)
-            st.subheader(result.get("most_comprehensive_document") or "Not specified")
-            st.caption("Document with the broadest or deepest treatment.")
-            with st.expander("View evidence", expanded=False):
-                render_statement_evidence(
-                    evidence_for_statement(
-                        evidence_items,
-                        f"{result.get('most_comprehensive_document')} is the most comprehensive document.",
-                    ),
-                    f"{result.get('most_comprehensive_document')} is the most comprehensive document.",
-                )
-
-    section_title("Final Recommendation", "Decision support")
+    section_title("Step 6 · Recommendation")
+    beginner_document = result.get("beginner_document") or "Not specified"
+    comprehensive_document = result.get("most_comprehensive_document") or "Not specified"
     st.markdown(
         f"""
-        <div class="dk-recommendation">
-          {escape(str(result.get("recommendation") or "No recommendation returned."))}
+        <div class="dk-recommendation-card">
+          <div>
+            <span>Best for Beginners</span>
+            <h3>{escape(str(beginner_document))}</h3>
+            <p>{escape(str(result.get("recommendation") or "No recommendation returned."))}</p>
+          </div>
+          <div>
+            <span>Most Comprehensive</span>
+            <h3>{escape(str(comprehensive_document))}</h3>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1430,14 +1419,14 @@ def render_comparison_answer_sources(sections: list[dict[str, Any]]) -> None:
     st.markdown(
         f"""
         <div class="dk-section-title" style="margin:.9rem 0 .45rem">
-          <h2 style="font-size:14px">Referenced sections</h2>
+          <h2 style="font-size:14px">Sources</h2>
           <span>{len(sections)} source sections</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
     for index, section in enumerate(sections, start=1):
-        with st.expander(f"Compare_chunk_{index:02d}", expanded=False):
+        with st.expander(f"Source {index:02d}", expanded=False):
             st.markdown(
                 f"""
                 <div class="dk-source-head">
@@ -1455,13 +1444,13 @@ def render_comparison_answer_sources(sections: list[dict[str, Any]]) -> None:
             st.caption(
                 f"Source document: {section.get('filename', 'Unknown source')} · "
                 f"Page {section.get('page_number', 0)} · "
-                f"Chunk {section.get('chunk_reference', 'unknown')}"
+                f"Section {section.get('chunk_reference', 'unknown')}"
             )
 
 
 def submit_comparison_question(comparison_id: int, question: str) -> None:
     try:
-        with st.spinner("Retrieving chunks across compared documents..."):
+        with st.spinner("Finding the best sources..."):
             ask_comparison_question(comparison_id, question)
         st.session_state.pop("latest_comparison_result", None)
         st.session_state.active_comparison_id = comparison_id
@@ -1472,12 +1461,11 @@ def submit_comparison_question(comparison_id: int, question: str) -> None:
 
 def render_comparison_chat(result: dict[str, Any]) -> None:
     comparison_id = int(result.get("id") or result.get("comparison_id"))
-    section_title("Ask about these documents", "Grounded comparison chat")
+    section_title("Step 7 · Ask Questions")
     st.markdown(
         """
         <div class="dk-comparison-ask-shell">
-          Ask targeted questions across only the PDFs in this comparison. Answers cite
-          retrieved chunks and stay inside the selected documents.
+          Ask follow-up questions about the documents in this comparison.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1518,7 +1506,7 @@ def render_comparison_chat(result: dict[str, Any]) -> None:
             confidence = item.get("confidence", "medium")
             st.caption(
                 f"Confidence: {confidence.title()} · "
-                f"Supporting documents: {', '.join(support) if support else 'No specific support'}"
+                f"Sources: {', '.join(support) if support else 'No specific source'}"
             )
             if item.get("evidence"):
                 with st.expander("Why this answer?", expanded=False):
@@ -1547,9 +1535,9 @@ def render_comparison_chat(result: dict[str, Any]) -> None:
 
 def render_compare_documents(corpora: list[dict[str, Any]]) -> None:
     page_header(
-        "Comparative intelligence",
+        "Documents",
         "Compare Documents",
-        "Select two or more uploaded PDFs and generate a structured summary-to-summary comparison.",
+        "Choose documents, compare what they cover, and ask follow-up questions.",
     )
 
     if not corpora:
@@ -1563,14 +1551,6 @@ def render_compare_documents(corpora: list[dict[str, Any]]) -> None:
         render_api_error(error)
         return
 
-    metric_grid(
-        [
-            ("Uploaded PDFs", str(len(documents)), "Available for comparison", "primary"),
-            ("Previous comparisons", str(len(comparisons)), "Saved analyses", None),
-            ("Active corpora", str(len(corpora)), "Document sources", "success"),
-        ]
-    )
-
     if len(documents) < 2:
         empty_state(
             "At least two PDFs are required",
@@ -1579,52 +1559,48 @@ def render_compare_documents(corpora: list[dict[str, Any]]) -> None:
         )
         return
 
-    compare_panel, archive_panel = st.columns([1.45, 0.9], gap="large")
     documents_by_id = {int(document["id"]): document for document in documents}
 
-    with compare_panel:
-        section_title("New comparison", "2+ documents")
-        with st.container(border=True):
-            st.markdown(
-                """
-                <div class="dk-label">Document set</div>
-                <h3 style="margin:.45rem 0 .35rem">Select PDFs to compare</h3>
-                <p style="font-size:13px;margin:0 0 .8rem">
-                  The backend summarizes each document first, then compares only the summaries.
-                </p>
-                """,
-                unsafe_allow_html=True,
-            )
-            selected_document_ids = st.multiselect(
-                "Uploaded documents",
-                options=[int(document["id"]) for document in documents],
-                format_func=lambda document_id: (
-                    f"{documents_by_id[document_id]['filename']} · "
-                    f"{documents_by_id[document_id]['corpus_name']}"
-                ),
-                placeholder="Choose two or more indexed PDFs",
-            )
-            selected_count = len(selected_document_ids)
-            st.caption(f"{selected_count} document{'s' if selected_count != 1 else ''} selected.")
-            if st.button(
-                "Compare Documents",
-                type="primary",
-                use_container_width=True,
-                disabled=selected_count < 2,
-            ):
-                try:
-                    with st.spinner("Summarizing documents and generating comparison..."):
-                        result = create_comparison(selected_document_ids)
-                    st.session_state.active_comparison_id = result["comparison_id"]
-                    st.session_state.latest_comparison_result = result
-                    st.rerun()
-                except requests.RequestException as error:
-                    render_api_error(error)
+    section_title("Step 1 · Select Documents")
+    with st.container(border=True):
+        st.markdown(
+            """
+            <div class="dk-compare-select-card">
+              <h3>Select documents to compare</h3>
+              <p>Choose at least two PDFs. You can compare more if needed.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        selected_document_ids = st.multiselect(
+            "Documents",
+            options=[int(document["id"]) for document in documents],
+            format_func=lambda document_id: (
+                f"{documents_by_id[document_id]['filename']} · "
+                f"{documents_by_id[document_id]['corpus_name']}"
+            ),
+            placeholder="Choose documents",
+        )
+        selected_count = len(selected_document_ids)
+        st.caption(f"{selected_count} document{'s' if selected_count != 1 else ''} selected.")
+        if st.button(
+            "Compare Documents",
+            type="primary",
+            use_container_width=True,
+            disabled=selected_count < 2,
+        ):
+            try:
+                with st.spinner("Comparing documents..."):
+                    result = create_comparison(selected_document_ids)
+                st.session_state.active_comparison_id = result["comparison_id"]
+                st.session_state.latest_comparison_result = result
+                st.rerun()
+            except requests.RequestException as error:
+                render_api_error(error)
 
-    with archive_panel:
-        section_title("Comparison archive", f"{len(comparisons)} saved")
+    with st.expander("Previous Comparisons", expanded=False):
         if not comparisons:
-            empty_state("No comparisons yet", "Run your first comparison to create an archive item.", "◇")
+            st.caption("No previous comparisons yet.")
         else:
             for comparison in comparisons[:6]:
                 with st.container(border=True):
@@ -1664,7 +1640,6 @@ def render_compare_documents(corpora: list[dict[str, Any]]) -> None:
             result = None
 
     if result:
-        section_title("Comparison output", "Structured JSON rendered")
         render_comparison_result(result)
 
 

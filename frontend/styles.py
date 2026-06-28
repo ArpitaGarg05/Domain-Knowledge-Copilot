@@ -550,6 +550,65 @@ p { color: var(--dk-muted); }
   color:var(--dk-outline);
   font-size:11px;
 }
+.dk-compare-select-card h3 {
+  margin:.1rem 0 .35rem;
+  font-size:20px;
+}
+.dk-compare-select-card p {
+  margin:0 0 1rem;
+  color:rgba(199,196,216,.70);
+  font-size:13px;
+}
+.dk-simple-point {
+  display:flex;
+  gap:.65rem;
+  align-items:flex-start;
+  padding:.85rem .95rem;
+  margin:0 0 .65rem;
+  border:1px solid rgba(70,69,85,.44);
+  border-radius:12px;
+  background:rgba(13,28,45,.46);
+}
+.dk-simple-point span {
+  color:var(--dk-primary);
+  font-size:18px;
+  line-height:1.2;
+}
+.dk-simple-point p {
+  margin:0;
+  color:rgba(212,228,250,.86);
+  font-size:14px;
+  line-height:1.6;
+}
+.dk-topic-tags {
+  display:flex;
+  flex-wrap:wrap;
+  gap:.55rem;
+  margin:.2rem 0 1.35rem;
+}
+.dk-topic-tags span {
+  padding:.45rem .7rem;
+  border-radius:999px;
+  border:1px solid rgba(195,192,255,.18);
+  background:rgba(79,70,229,.10);
+  color:rgba(212,228,250,.92);
+  font-size:13px;
+}
+.dk-unique-topic-card {
+  min-width:0;
+  padding:.9rem .95rem;
+  margin:.25rem 0 .65rem;
+  border:1px solid rgba(70,69,85,.46);
+  border-radius:12px;
+  background:rgba(13,28,45,.50);
+}
+.dk-unique-topic-card h3 {
+  margin:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  font-size:16px;
+}
 .dk-comparison-list {
   margin:.2rem 0 1rem;
   padding:0;
@@ -682,6 +741,34 @@ p { color: var(--dk-muted); }
   font-size:14px;
   line-height:1.7;
 }
+.dk-recommendation-card {
+  display:grid;
+  grid-template-columns:1.4fr 1fr;
+  gap:1rem;
+  padding:1.1rem;
+  margin:.2rem 0 1.5rem;
+  border:1px solid rgba(78,222,163,.20);
+  border-radius:14px;
+  background:linear-gradient(135deg, rgba(78,222,163,.08), rgba(13,28,45,.72));
+}
+.dk-recommendation-card span {
+  display:block;
+  margin-bottom:.35rem;
+  color:var(--dk-success);
+  font:600 10px/1.4 "JetBrains Mono",monospace;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.dk-recommendation-card h3 {
+  margin:0 0 .45rem;
+  font-size:18px;
+}
+.dk-recommendation-card p {
+  margin:0;
+  color:rgba(212,228,250,.82);
+  font-size:14px;
+  line-height:1.65;
+}
 .dk-comparison-ask-shell {
   margin:0 0 .85rem;
   padding:.85rem 1rem;
@@ -808,6 +895,7 @@ p { color: var(--dk-muted); }
   .dk-document { grid-template-columns:1fr auto; }
   .dk-document .dk-doc-stat { display:none; }
   .dk-comparison-docs { grid-template-columns:1fr; }
+  .dk-recommendation-card { grid-template-columns:1fr; }
 }
 @media (max-width: 600px) {
   .dk-metric-grid { grid-template-columns:1fr; }
