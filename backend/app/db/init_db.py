@@ -3,7 +3,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from app.core.config import settings
 from app.db.base import Base
@@ -32,14 +32,23 @@ def run_migrations() -> None:
         logger.info("Fresh database schema created and stamped at Alembic head.")
         return
 
-    logger.info("===== Starting Alembic migrations =====")
+    logger.info("Running Alembic migrations.")
+    if engine.dialect.name == "postgresql":
+        with engine.connect() as connection:
+            connection.execute(text("SELECT pg_advisory_lock(73421491)"))
+            try:
+                command.upgrade(config, "head")
+            except Exception:
+                logger.exception("Alembic migration failed.")
+                raise
+            finally:
+                connection.execute(text("SELECT pg_advisory_unlock(73421491)"))
+        logger.info("Alembic migrations complete.")
+        return
 
     try:
-        logger.info("Before command.upgrade()")
         command.upgrade(config, "head")
-        logger.info("After command.upgrade()")
     except Exception:
         logger.exception("Alembic migration failed.")
         raise
-
-    logger.info("===== Alembic migrations complete =====")
+    logger.info("Alembic migrations complete.")

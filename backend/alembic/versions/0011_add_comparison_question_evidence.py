@@ -17,6 +17,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("comparison_questions")
+    }
+    if "evidence" in columns:
+        return
+
     op.add_column(
         "comparison_questions",
         sa.Column("evidence", sa.Text(), nullable=False, server_default="[]"),
@@ -24,4 +33,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("comparison_questions")
+    }
+    if "evidence" not in columns:
+        return
+
     op.drop_column("comparison_questions", "evidence")
