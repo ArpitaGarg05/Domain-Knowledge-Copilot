@@ -325,6 +325,23 @@ p { color: var(--dk-muted); }
 .dk-metric__meta { color: rgba(199,196,216,.62); font-size: 12px; }
 .dk-metric--primary .dk-metric__value { color: var(--dk-primary); }
 .dk-metric--success .dk-metric__value { color: var(--dk-success); }
+.dk-storage-usage {
+  margin:.55rem 0 .45rem;
+}
+.dk-storage-usage__track {
+  width:100%;
+  height:7px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(145,143,161,.18);
+  border:1px solid rgba(70,69,85,.42);
+}
+.dk-storage-usage__bar {
+  height:100%;
+  border-radius:999px;
+  background:linear-gradient(90deg,var(--dk-primary-strong),var(--dk-success));
+  box-shadow:0 0 14px rgba(78,222,163,.22);
+}
 
 .dk-section-title {
   display:flex; align-items:end; justify-content:space-between; gap:1rem;
@@ -843,10 +860,24 @@ def metric_grid(metrics: list[tuple[str, str, str, Optional[str]]]) -> None:
     cards = []
     for label, value, meta, accent in metrics:
         modifier = f" dk-metric--{escape(accent)}" if accent else ""
+        progress = ""
+        if label.lower() == "storage" and "%" in meta:
+            try:
+                percent = max(0.0, min(float(meta.split("%", 1)[0]), 100.0))
+                progress = (
+                    '<div class="dk-storage-usage">'
+                    '<div class="dk-storage-usage__track">'
+                    f'<div class="dk-storage-usage__bar" style="width:{percent:.2f}%"></div>'
+                    "</div>"
+                    "</div>"
+                )
+            except ValueError:
+                progress = ""
         cards.append(
             f'<div class="dk-metric{modifier}">'
             f'<div class="dk-metric__label">{escape(label)}</div>'
             f'<div class="dk-metric__value">{escape(value)}</div>'
+            f"{progress}"
             f'<div class="dk-metric__meta">{escape(meta)}</div>'
             "</div>"
         )

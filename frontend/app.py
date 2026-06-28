@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from html import escape
@@ -8,6 +9,7 @@ from typing import Any, Optional
 import extra_streamlit_components as stx
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 from styles import (
     empty_state,
@@ -29,6 +31,17 @@ st.set_page_config(
 inject_styles()
 
 API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+DEFAULT_STORAGE_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def parse_storage_limit() -> int:
+    try:
+        return int(os.getenv("MAX_STORAGE_BYTES", str(DEFAULT_STORAGE_LIMIT_BYTES)))
+    except ValueError:
+        return DEFAULT_STORAGE_LIMIT_BYTES
+
+
+MAX_STORAGE_BYTES = parse_storage_limit()
 AUTH_COOKIE_NAME = "dkc_access_token"
 AUTH_LOGGED_OUT_VALUE = "__logged_out__"
 AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24
@@ -51,6 +64,7 @@ st.session_state.setdefault("default_workspace", "Corpus Dashboard")
 st.session_state.setdefault("auth_tab", "Login")
 if st.session_state.auth_tab == "Sign-Up":
     st.session_state.auth_tab = "Sign Up"
+st.session_state.setdefault("upload_nonce", 0)
 cookie_manager = stx.CookieManager(key="auth_cookie_manager")
 
 
@@ -160,6 +174,10 @@ def create_corpus(name: str, description: str) -> dict[str, Any]:
         "/corpora",
         json={"name": name, "description": description},
     )
+
+
+def is_valid_corpus_name(name: str) -> bool:
+    return bool(re.search(r"[A-Za-z]", name.strip()))
 
 
 def delete_corpus(corpus_id: int) -> dict[str, Any]:
@@ -356,6 +374,8 @@ def queue_navigation(
     conversation_id: Optional[str] = None,
 ) -> None:
     st.session_state.pending_page = page
+    if page == "Corpus Detail":
+        st.session_state.upload_nonce = int(st.session_state.get("upload_nonce", 0)) + 1
     if corpus_id is not None:
         st.session_state.pending_selected_corpus_id = corpus_id
     if conversation_id is not None:
@@ -427,8 +447,11 @@ def humanize_api_error(detail: Any) -> str:
             if isinstance(item, dict):
                 location = item.get("loc", [])
                 field = str(location[-1]).replace("_", " ") if location else "Input"
-                message = str(item.get("msg", "is invalid"))
-                messages.append(f"{field.title()} {message}.")
+                message = clean_validation_message(str(item.get("msg", "is invalid")))
+                if message.lower().startswith(field.lower()) or "corpus name" in message.lower():
+                    messages.append(message)
+                else:
+                    messages.append(f"{field.title()} {message}.")
             else:
                 messages.append(str(item))
         return " ".join(messages) if messages else "Please check your input."
@@ -450,6 +473,13 @@ def humanize_api_error(detail: Any) -> str:
     if "field required" in normalized:
         return "Please complete all required fields."
     return message.rstrip(".") + "."
+
+
+def clean_validation_message(message: str) -> str:
+    cleaned = message.strip()
+    if cleaned.lower().startswith("value error,"):
+        cleaned = cleaned.split(",", 1)[1].strip()
+    return cleaned.rstrip(".") + "."
 
 
 def set_auth_tab(tab: str) -> None:
@@ -569,10 +599,35 @@ def render_auth_page() -> None:
 def handle_workspace_change() -> None:
     if st.session_state.get("active_page") == "Corpus Chat":
         st.session_state.pop("active_conversation_id", None)
+    if st.session_state.get("active_page") == "Corpus Detail":
+        st.session_state.upload_nonce = int(st.session_state.get("upload_nonce", 0)) + 1
 
 
 def handle_corpus_change() -> None:
     st.session_state.pop("active_conversation_id", None)
+    st.session_state.upload_nonce = int(st.session_state.get("upload_nonce", 0)) + 1
+    st.session_state.blur_active_corpus_select = True
+
+
+def blur_active_corpus_select() -> None:
+    if not st.session_state.pop("blur_active_corpus_select", False):
+        return
+    components.html(
+        """
+        <script>
+          setTimeout(() => {
+            const doc = window.parent.document;
+            const active = doc.activeElement;
+            if (active && typeof active.blur === "function") active.blur();
+            doc.querySelectorAll('[data-baseweb="popover"]').forEach((node) => {
+              node.style.display = "none";
+            });
+          }, 80);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def render_sidebar(corpora: list[dict[str, Any]]) -> str:
@@ -621,6 +676,7 @@ def render_sidebar(corpora: list[dict[str, Any]]) -> str:
                 label_visibility="collapsed",
                 on_change=handle_corpus_change,
             )
+            blur_active_corpus_select()
 
         user = st.session_state.get("current_user", {})
         initial = escape(str(user.get("display_name", "U"))[:1].upper())
@@ -674,28 +730,36 @@ def render_create_corpus(form_key: str) -> None:
     with st.container(border=True):
         st.markdown('<div class="dk-label">Create corpus</div>', unsafe_allow_html=True)
         st.subheader("Create a knowledge workspace")
-        with st.form(form_key, clear_on_submit=True):
-            name = st.text_input("Corpus name", placeholder="Project documents")
-            description = st.text_area(
-                "Description",
-                placeholder="What domain knowledge will this corpus contain?",
-            )
-            submitted = st.form_submit_button(
-                "Create Corpus",
-                type="primary",
-                use_container_width=True,
-            )
-        if submitted:
-            if not name.strip():
-                st.warning("Enter a corpus name.")
-            else:
-                try:
-                    created = create_corpus(name.strip(), description.strip())
-                    st.session_state.show_create_corpus = False
-                    queue_navigation("Corpus Detail", int(created["id"]))
-                    st.rerun()
-                except requests.RequestException as error:
-                    render_api_error(error)
+        name_key = f"{form_key}-name"
+        description_key = f"{form_key}-description"
+        name = st.text_input(
+            "Corpus name",
+            placeholder="Project documents",
+            key=name_key,
+        )
+        description = st.text_area(
+            "Description",
+            placeholder="What domain knowledge will this corpus contain?",
+            key=description_key,
+        )
+        name_has_value = bool(name.strip())
+        name_is_valid = is_valid_corpus_name(name)
+        if name_has_value and not name_is_valid:
+            st.warning("Corpus name must contain at least one letter.")
+        if st.button(
+            "Create Corpus",
+            type="primary",
+            use_container_width=True,
+            disabled=not name_has_value or not name_is_valid,
+            key=f"{form_key}-submit",
+        ):
+            try:
+                created = create_corpus(name.strip(), description.strip())
+                st.session_state.show_create_corpus = False
+                queue_navigation("Corpus Detail", int(created["id"]))
+                st.rerun()
+            except requests.RequestException as error:
+                render_api_error(error)
 
 
 def render_dashboard(corpora: list[dict[str, Any]]) -> None:
@@ -760,6 +824,19 @@ def document_row(document: dict[str, Any]) -> None:
     )
 
 
+def storage_usage_metric(total_storage_bytes: int) -> tuple[str, str, str, Optional[str]]:
+    if MAX_STORAGE_BYTES <= 0:
+        return ("Storage", format_bytes(total_storage_bytes), "No storage limit", None)
+
+    percentage = min((total_storage_bytes / MAX_STORAGE_BYTES) * 100, 100)
+    return (
+        "Storage",
+        f"{format_bytes(total_storage_bytes)} / {format_bytes(MAX_STORAGE_BYTES)}",
+        f"{percentage:.1f}% used",
+        None,
+    )
+
+
 def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
     corpus = selected_corpus(corpora)
     if corpus is None:
@@ -778,15 +855,16 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
         str(corpus["name"]),
         str(corpus.get("description") or "Domain knowledge corpus."),
     )
+    total_storage_bytes = int(detail["total_storage_bytes"])
     metrics = [
         ("Documents", str(detail["total_documents"]), "Uploaded source files", "primary"),
         ("Pages", f'{int(detail["total_pages"]):,}', "Extracted and searchable", None),
         ("Search sections", f'{int(detail["total_embeddings"]):,}', "Ready for search", "success"),
-        ("Storage", format_bytes(int(detail["total_storage_bytes"])), "Uploaded PDF footprint", None),
+        storage_usage_metric(total_storage_bytes),
     ]
     metric_grid(metrics)
 
-    inventory, action = st.columns([1.65, 0.85], gap="large")
+    inventory, action = st.columns([1.45, 1], gap="large")
     with inventory:
         section_title("Document inventory", f'{detail["total_documents"]} indexed')
         if detail["documents"]:
@@ -804,20 +882,22 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
         with st.container(border=True):
             st.markdown(
                 """
-                <div class="dk-label">Upload action area</div>
-                <h3 style="margin:.45rem 0 .25rem">Index new material</h3>
+                <h3 style="margin:.1rem 0 .35rem">Upload and Index Documents</h3>
                 <p style="font-size:13px;margin:0 0 .8rem">
-                  Text is extracted page-by-page, processed, and made searchable
-                  in this corpus.
+                  Upload PDF documents to make them searchable and available for
+                  AI-powered chat and document comparison.
+                </p>
+                <p style="font-size:12px;margin:0 0 .8rem;color:#918fa1">
+                  Supported format: PDF (.pdf)
                 </p>
                 """,
                 unsafe_allow_html=True,
             )
             uploaded_pdf = st.file_uploader(
-                "Source document",
+                "+ Upload PDF",
                 type=["pdf"],
                 accept_multiple_files=False,
-                key=f"detail-upload-{corpus['id']}",
+                key=f"detail-upload-{corpus['id']}-{st.session_state.upload_nonce}",
             )
             if st.button(
                 "Upload & Index",
@@ -826,38 +906,16 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
                 disabled=uploaded_pdf is None,
             ):
                 try:
-                    with st.spinner("Extracting, chunking, and vectorizing..."):
+                    with st.spinner("Uploading and indexing document..."):
                         document = upload_pdf(int(corpus["id"]), uploaded_pdf)
                     st.success(
                         f"{document['filename']} indexed into "
                         f"{document['chunk_count']} chunks."
                     )
+                    st.session_state.upload_nonce += 1
                     st.rerun()
                 except requests.RequestException as error:
                     render_api_error(error)
-
-        with st.container(border=True):
-            st.markdown(
-                f"""
-                <div class="dk-label">Document status</div>
-                <h3 style="margin:.45rem 0 .75rem">Search readiness</h3>
-                <div style="display:grid;gap:.7rem">
-                  <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1;font-size:12px">Search index</span>
-                    {status_badge("Connected")}
-                  </div>
-                  <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1;font-size:12px">Indexed sections</span>
-                    <code style="color:#c3c0ff">{int(detail["total_embeddings"]):,}</code>
-                  </div>
-                  <div style="display:flex;justify-content:space-between">
-                    <span style="color:#918fa1;font-size:12px">Corpus ID</span>
-                    <code style="color:#d4e4fa">corpus_{int(corpus["id"])}</code>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
 
 
 def render_citations(sources: list[dict[str, Any]]) -> None:
