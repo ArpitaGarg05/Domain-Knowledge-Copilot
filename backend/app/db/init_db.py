@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Optional
 
 from alembic import command
 from alembic.config import Config
@@ -11,6 +12,9 @@ from app.db.session import engine
 from app.models import chat_message, comparison, corpus, document, user
 
 logger = logging.getLogger(__name__)
+
+COMPARISON_EVIDENCE_NOOP_REVISION = "0011_add_comparison_question_evidence"
+COMPARISON_QUESTIONS_REVISION = "0010_add_comparison_questions"
 
 
 def run_migrations() -> None:
@@ -30,6 +34,15 @@ def run_migrations() -> None:
         Base.metadata.create_all(bind=engine)
         command.stamp(config, "head")
         logger.info("Fresh database schema created and stamped at Alembic head.")
+        return
+
+    current_revision = get_current_revision()
+    if current_revision == COMPARISON_QUESTIONS_REVISION:
+        logger.info(
+            "Stamping no-op comparison evidence migration without running DDL.",
+        )
+        command.stamp(config, COMPARISON_EVIDENCE_NOOP_REVISION)
+        logger.info("Database stamped at Alembic head.")
         return
 
     logger.info("Running Alembic migrations.")
@@ -52,3 +65,14 @@ def run_migrations() -> None:
         logger.exception("Alembic migration failed.")
         raise
     logger.info("Alembic migrations complete.")
+
+
+def get_current_revision() -> Optional[str]:
+    try:
+        with engine.connect() as connection:
+            return connection.execute(
+                text("SELECT version_num FROM alembic_version LIMIT 1"),
+            ).scalar_one_or_none()
+    except Exception:
+        logger.exception("Could not read current Alembic revision.")
+        return None
