@@ -142,6 +142,8 @@ def build_corpus_response(corpus: Corpus) -> CorpusResponse:
         name=corpus.name,
         description=corpus.description,
         document_count=len(corpus.documents),
+        total_storage_bytes=sum(document.file_size_bytes for document in corpus.documents),
+        updated_at=corpus.updated_at,
     )
 
 

@@ -353,26 +353,50 @@ p { color: var(--dk-muted); }
   color: var(--dk-outline); letter-spacing:.08em; text-transform:uppercase;
 }
 
+.dk-create-corpus-card h2 {
+  margin:.1rem 0 .35rem;
+  font-size:22px;
+}
+.dk-create-corpus-card p {
+  margin:0 0 1rem;
+  color:rgba(199,196,216,.72);
+  font-size:13px;
+}
+
 .dk-corpus-card, .dk-document, .dk-history-card, .dk-source-head {
   border: 1px solid rgba(70,69,85,.72);
   background: linear-gradient(135deg, rgba(18,33,49,.92), rgba(13,28,45,.72));
   box-shadow: inset 0 1px 0 rgba(212,228,250,.035);
 }
 .dk-corpus-card {
-  min-height: 178px;
+  min-height: 160px;
   padding: 1rem;
   border-radius: 12px;
 }
 .dk-corpus-card__top {
   display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;
 }
-.dk-corpus-card h3 { margin:.5rem 0 .35rem; font-size:20px; }
+.dk-corpus-card h3 {
+  min-width:0;
+  margin:0 0 .45rem;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  font-size:20px;
+  line-height:1.25;
+}
 .dk-corpus-card p {
-  min-height: 42px; margin:0 0 .8rem;
-  color:rgba(199,196,216,.68); font-size:13px;
+  display:-webkit-box;
+  min-height:42px;
+  margin:0 0 .9rem;
+  overflow:hidden;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  color:rgba(199,196,216,.68);
+  font-size:13px;
+  line-height:1.55;
 }
 .dk-corpus-card__footer {
-  display:flex; justify-content:space-between; align-items:center;
+  display:flex; flex-wrap:wrap; gap:.45rem .75rem; align-items:center;
   padding-top:.75rem; border-top:1px solid rgba(70,69,85,.44);
   font:500 10px/1.4 "JetBrains Mono",monospace; color:var(--dk-outline);
 }

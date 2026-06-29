@@ -10,3 +10,4 @@ venv/
 *.sqlite3
 uploads/
 chroma/
+project_overview/

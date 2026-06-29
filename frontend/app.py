@@ -699,27 +699,38 @@ def render_sidebar(corpora: list[dict[str, Any]]) -> str:
 
 
 def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
+    description = str(corpus.get("description") or "").strip()
+    storage_bytes = int(corpus.get("total_storage_bytes") or 0)
+    updated_at = corpus.get("updated_at")
+    updated_label = format_datetime(updated_at, "%d %b %Y") if updated_at else ""
+    document_count = int(corpus["document_count"])
+    document_label = f"{document_count} indexed document{'s' if document_count != 1 else ''}"
+    meta_items = [
+        f"<span>{escape(document_label)}</span>",
+        f"<span>{escape(format_bytes(storage_bytes))}</span>",
+    ]
+    if updated_label:
+        meta_items.append(f"<span>Updated {escape(updated_label)}</span>")
+
     with st.container(border=True):
         st.markdown(
             f"""
             <div class="dk-corpus-card">
               <div class="dk-corpus-card__top">
-                <span class="dk-chip">Corpus {int(corpus["id"]):02d}</span>
+                <h3>{escape(str(corpus["name"]))}</h3>
                 {status_badge("Active")}
               </div>
-              <h3>{escape(str(corpus["name"]))}</h3>
-              <p>{escape(str(corpus.get("description") or "No description supplied."))}</p>
+              {f'<p>{escape(description)}</p>' if description else ''}
               <div class="dk-corpus-card__footer">
-                <span>{int(corpus["document_count"]):02d} documents</span>
-                <span>Workspace</span>
+                {"".join(meta_items)}
               </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.button(
-            "Open Corpus  →",
-            key=f"open-corpus-{index}",
+            "Open Workspace",
+            key=f"open-corpus-{corpus['id']}-{index}",
             use_container_width=True,
             on_click=queue_navigation,
             args=("Corpus Detail", int(corpus["id"])),
@@ -728,12 +739,19 @@ def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
 
 def render_create_corpus(form_key: str) -> None:
     with st.container(border=True):
-        st.markdown('<div class="dk-label">Create corpus</div>', unsafe_allow_html=True)
-        st.subheader("Create a knowledge workspace")
+        st.markdown(
+            """
+            <div class="dk-create-corpus-card">
+              <h2>Create New Corpus</h2>
+              <p>Create a workspace for a set of related documents.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         name_key = f"{form_key}-name"
         description_key = f"{form_key}-description"
         name = st.text_input(
-            "Corpus name",
+            "Corpus Name",
             placeholder="Project documents",
             key=name_key,
         )
@@ -755,11 +773,23 @@ def render_create_corpus(form_key: str) -> None:
         ):
             try:
                 created = create_corpus(name.strip(), description.strip())
-                st.session_state.show_create_corpus = False
                 queue_navigation("Corpus Detail", int(created["id"]))
                 st.rerun()
             except requests.RequestException as error:
                 render_api_error(error)
+
+
+def corpus_matches_search(corpus: dict[str, Any], query: str) -> bool:
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return True
+    searchable_text = " ".join(
+        [
+            str(corpus.get("name") or ""),
+            str(corpus.get("description") or ""),
+        ]
+    ).lower()
+    return normalized_query in searchable_text
 
 
 def render_dashboard(corpora: list[dict[str, Any]]) -> None:
@@ -780,25 +810,39 @@ def render_dashboard(corpora: list[dict[str, Any]]) -> None:
         ]
     )
 
-    if st.session_state.get("show_create_corpus", False) or not corpora:
-        render_create_corpus("create-corpus-primary-form")
+    render_create_corpus("create-corpus-dashboard-form")
 
-    section_title("Knowledge corpora", f"{len(corpora)} workspaces")
+    section_title("Existing Workspaces", f"{len(corpora)} total")
     if not corpora:
         empty_state(
-            "No corpora yet",
-            "Create a corpus to begin indexing domain documents.",
+            "No workspaces yet",
+            "Create a new corpus to begin indexing documents.",
             "＋",
         )
         return
 
+    search_query = st.text_input(
+        "Search workspaces",
+        placeholder="🔍 Search workspaces...",
+        key="dashboard-corpus-search",
+        label_visibility="collapsed",
+    )
+    filtered_corpora = [
+        corpus for corpus in corpora if corpus_matches_search(corpus, search_query)
+    ]
+
+    if not filtered_corpora:
+        empty_state(
+            "No workspaces found.",
+            "Try a different search term or create a new workspace.",
+            "⌕",
+        )
+        return
+
     columns = st.columns(2)
-    for index, corpus in enumerate(corpora):
+    for index, corpus in enumerate(filtered_corpora):
         with columns[index % 2]:
             render_corpus_card(corpus, index)
-
-    with st.expander("Create another corpus"):
-        render_create_corpus("create-corpus-secondary-form")
 
 
 def document_row(document: dict[str, Any]) -> None:

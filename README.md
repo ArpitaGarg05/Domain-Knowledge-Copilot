@@ -1,99 +1,81 @@
 # Domain Knowledge Copilot
 
-Domain Knowledge Copilot is a multi-user retrieval-augmented generation (RAG)
-application for chatting with private collections of PDF documents. Users can
-create corpora, upload PDFs, run semantic searches, and receive grounded
-answers with page-level source citations.
+Domain Knowledge Copilot is a document intelligence application that allows authenticated users to create document workspaces, upload PDF files, ask grounded questions, inspect citations, review chat history, and compare multiple PDFs. The project is designed as an academic capstone submission for the New Age Software Engineering Program by iHUB DivyaSampark.
 
-The application consists of a FastAPI backend and a Streamlit frontend. It uses
-SQLAlchemy for application data, ChromaDB for vector retrieval, and Groq for
-answer generation.
+## Problem Statement
 
-## Features
+Students, researchers, and professionals often manage large collections of PDF documents. Finding precise information across those documents is time-consuming, and generic AI chat tools may answer without source grounding. This project addresses the need for a workspace-based assistant that retrieves relevant document sections before generating answers and exposes supporting evidence to the user.
 
-- Email/password registration and JWT-based authentication
-- User-owned, isolated document corpora
-- PDF upload and page-by-page text extraction
-- Overlapping text chunking with stored embedding metadata
-- Persistent, per-corpus ChromaDB vector collections
-- Semantic search over uploaded documents
-- Groq-powered answers constrained to retrieved sources
-- Page, filename, and chunk citations for generated answers
-- Per-user and per-corpus chat history
-- SQLite for local development and PostgreSQL support for deployment
+## Objectives
 
-## How it works
+- Provide secure user accounts with isolated document workspaces.
+- Enable PDF upload, text extraction, chunking, embedding, and indexing.
+- Support retrieval-augmented question answering over uploaded PDFs.
+- Display page-level citations and expandable evidence.
+- Preserve previous conversations for later access.
+- Provide an advanced PDF comparison workflow for two or more documents.
+- Keep the user interface approachable through a dark, professional productivity-style design.
+
+## Key Features
+
+- Email/password sign up and login.
+- Persistent session restoration through a frontend auth cookie.
+- Corpus dashboard with workspace creation, search, and summary metrics.
+- PDF upload and indexing.
+- Per-corpus chat with retrieved sources.
+- Conversation history with corpus filtering and resume behavior.
+- Multi-document PDF comparison.
+- Comparison follow-up questions across selected documents.
+- Evidence cards with document, page, section, similarity score, and relevant paragraph.
+- Settings for user profile and interface preferences.
+
+## System Overview
+
+The application has a Streamlit frontend and a FastAPI backend. The backend stores relational data with SQLAlchemy, manages migrations with Alembic, stores PDF files on disk, stores vectors in ChromaDB, and uses Groq for LLM responses. Embeddings default to a deterministic hash-based backend, with optional Sentence Transformers support.
 
 ```mermaid
 flowchart LR
-    U["User"] --> F["Streamlit UI"]
-    F --> A["FastAPI API"]
-    A --> DB["SQLite or PostgreSQL"]
-    A --> P["PDF extraction and chunking"]
-    P --> E["Embedding service"]
-    E --> C["ChromaDB"]
-    A --> C
-    C --> A
-    A --> G["Groq LLM"]
-    G --> A
-    A --> F
+    User["User"] --> UI["Streamlit Frontend"]
+    UI --> API["FastAPI Backend"]
+    API --> DB["SQLite/PostgreSQL"]
+    API --> Files["Uploaded PDFs"]
+    API --> Extract["PDF Extraction + Chunking"]
+    Extract --> Embed["Embedding Service"]
+    Embed --> Chroma["ChromaDB Vector Store"]
+    API --> Groq["Groq LLM"]
+    Chroma --> API
+    Groq --> API
+    API --> UI
 ```
 
-When a PDF is uploaded, the backend extracts text with `pypdf`, splits each
-page into overlapping chunks, creates embeddings, and writes the vectors to a
-Chroma collection dedicated to that corpus. At question time, the same
-embedding backend encodes the query, Chroma returns the nearest chunks, and
-the backend sends those chunks plus recent conversation history to Groq. The
-answer and its retrieved sources are then saved to chat history.
-
-## Tech stack
+## Technology Stack
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | Streamlit, Requests |
-| API | FastAPI, Uvicorn, Pydantic |
-| Authentication | Signed JWT-style bearer tokens, PBKDF2 password hashing |
-| Relational data | SQLAlchemy, Alembic, SQLite/PostgreSQL |
-| PDF processing | pypdf |
-| Embeddings | Built-in hash embeddings or Sentence Transformers |
-| Vector store | ChromaDB |
-| Answer generation | Groq (`llama-3.3-70b-versatile`) |
+| Frontend | Streamlit, Requests, extra-streamlit-components |
+| Backend | FastAPI, Uvicorn, Pydantic |
+| Database | SQLAlchemy, Alembic, SQLite default, PostgreSQL supported |
+| Authentication | Custom HMAC-signed JWT-style bearer token, PBKDF2 password hashing |
+| PDF Processing | pypdf |
+| Chunking | Character-based overlapping chunks |
+| Embeddings | Hash embeddings by default; optional Sentence Transformers |
+| Vector Database | ChromaDB persistent collections |
+| LLM | Groq SDK, default model `llama-3.3-70b-versatile` |
+| Deployment Config | `backend/render.yaml`; Railway-compatible environment variables |
 
-## Repository structure
+## Architecture Overview
 
-```text
-.
-├── backend/
-│   ├── alembic/              # Database migrations
-│   ├── app/
-│   │   ├── api/              # FastAPI routes and dependencies
-│   │   ├── core/             # Configuration and security
-│   │   ├── crud/             # Database operations
-│   │   ├── db/               # Engine, sessions, and migration startup
-│   │   ├── models/           # SQLAlchemy models
-│   │   ├── schemas/          # Request and response models
-│   │   └── services/         # PDF, chunking, embeddings, retrieval, and LLM
-│   ├── render.yaml           # Render backend service definition
-│   └── requirements.txt
-├── frontend/
-│   ├── app.py                # Streamlit application
-│   └── requirements.txt
-└── docs/
-```
+The backend follows a layered structure:
 
-## Prerequisites
+- API routes validate requests and enforce user ownership.
+- CRUD modules perform database operations.
+- Services encapsulate PDF extraction, chunking, embeddings, vector retrieval, LLM prompts, and comparison logic.
+- SQLAlchemy models define relational persistence.
+- Alembic migrations evolve the schema.
 
-- Python 3.10 or newer
-- A [Groq API key](https://console.groq.com/keys) for generated answers
-- PostgreSQL only if you do not want to use the default local SQLite database
+The frontend is a single Streamlit application with page-level render functions for dashboard, corpus detail, corpus chat, comparison, history, and settings.
 
-The default hash embedding backend works without downloading a model. To use
-Sentence Transformers, the selected model must be downloaded on first use
-unless it is already cached.
-
-## Local setup
-
-Clone the repository and create a virtual environment:
+## Installation
 
 ```bash
 git clone <repository-url>
@@ -101,39 +83,35 @@ cd Domain-Knowledge-Copilot
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r backend/requirements.txt -r frontend/requirements.txt
+pip install -r backend/requirements.txt
+pip install -r frontend/requirements.txt
 ```
 
-Configure the backend environment:
+## Environment Variables
 
-```bash
-export GROQ_API_KEY="your-groq-api-key"
-export JWT_SECRET_KEY="replace-with-a-long-random-secret"
-```
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | No | `sqlite:///./domain_knowledge_copilot.db` | SQLAlchemy database URL. Use PostgreSQL in production. |
+| `GROQ_API_KEY` | Yes for LLM answers | None | API key for Groq completion requests. |
+| `JWT_SECRET_KEY` | Yes in production | `development-only-change-me` | Secret used to sign tokens. |
+| `EMBEDDING_BACKEND` | No | `hash` | Use `hash` or `sentence-transformers`. |
+| `EMBEDDING_MODEL` | No | `all-MiniLM-L6-v2` | Sentence Transformer model name when enabled. |
+| `BACKEND_URL` | Frontend | `http://localhost:8000` | Backend API base URL used by Streamlit. |
+| `AUTH_COOKIE_SECURE` | Production recommended | false | Enables secure auth cookie behavior in HTTPS deployments. |
+| `MAX_STORAGE_BYTES` | Frontend optional | 2 GB | Display limit for storage usage cards. |
 
-Optional configuration:
-
-```bash
-# Defaults to sqlite:///./domain_knowledge_copilot.db
-export DATABASE_URL="postgresql+psycopg://user:password@localhost/copilot"
-
-# "hash" is the default; use "sentence-transformers" for model embeddings
-export EMBEDDING_BACKEND="sentence-transformers"
-export EMBEDDING_MODEL="all-MiniLM-L6-v2"
-```
-
-Start the backend from the `backend` directory:
+## Running Backend
 
 ```bash
 cd backend
+export GROQ_API_KEY="your-groq-api-key"
+export JWT_SECRET_KEY="replace-with-a-secure-secret"
 uvicorn app.main:app --reload
 ```
 
-The API will be available at `http://localhost:8000`, with interactive
-documentation at `http://localhost:8000/docs`. On startup, the backend creates
-a fresh schema or applies pending Alembic migrations automatically.
+The backend is available at `http://localhost:8000`.
 
-In a second terminal, activate the same environment and start the frontend:
+## Running Frontend
 
 ```bash
 cd frontend
@@ -141,116 +119,98 @@ export BACKEND_URL="http://localhost:8000"
 streamlit run app.py
 ```
 
-Streamlit normally opens the application at `http://localhost:8501`.
+The frontend usually opens at `http://localhost:8501`.
 
-## Using the application
+## Database Setup
 
-1. Register a new account or sign in.
-2. Open **Corpus Settings** and create a corpus.
-3. Select the corpus and upload one or more text-based PDF files from the
-   dashboard.
-4. Open **Corpus Chat** and ask questions about the uploaded material.
-5. Expand the retrieved sources beneath an answer to inspect its citations.
-
-> [!NOTE]
-> PDF extraction is text-only. Scanned PDFs require OCR before upload.
-
-## Configuration
-
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `GROQ_API_KEY` | For answers | None | Authenticates requests to Groq |
-| `JWT_SECRET_KEY` | Production | Development-only value | Signs authentication tokens |
-| `DATABASE_URL` | No | `sqlite:///./domain_knowledge_copilot.db` | SQLAlchemy database URL |
-| `EMBEDDING_BACKEND` | No | `hash` | `hash` or `sentence-transformers` |
-| `EMBEDDING_MODEL` | No | `all-MiniLM-L6-v2` | Sentence Transformer model name |
-| `BACKEND_URL` | No | `http://localhost:8000` | Backend URL used by Streamlit |
-| `AUTH_COOKIE_SECURE` | Production | `false` | Restricts the persistent frontend auth cookie to HTTPS |
-
-The backend also creates two local persistence directories relative to its
-working directory:
-
-- `uploads/` stores uploaded PDF files.
-- `chroma/` stores persistent ChromaDB collections.
-
-Both directories, local database files, virtual environments, and environment
-files are excluded by `.gitignore`.
-
-## API overview
-
-All routes except the root, health checks, registration, and login require an
-`Authorization: Bearer <token>` header.
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/health` | Health check |
-| `POST` | `/auth/register` | Create a user and return an access token |
-| `POST` | `/auth/login` | Authenticate and return an access token |
-| `GET` | `/auth/me` | Hydrate the current user from a valid bearer token |
-| `PATCH` | `/auth/profile` | Update the current user's display name |
-| `GET` | `/corpora` | List the current user's corpora |
-| `POST` | `/corpora` | Create a corpus |
-| `DELETE` | `/corpora/{corpus_id}` | Delete a corpus and its vector collection |
-| `GET` | `/corpora/{corpus_id}/documents` | List indexed documents and corpus statistics |
-| `POST` | `/corpora/{corpus_id}/upload` | Upload and index a PDF |
-| `POST` | `/search` | Return semantically similar chunks |
-| `POST` | `/answer` | Generate a grounded answer with sources |
-| `GET` | `/history` | Return the current user's chat history |
-
-Example authenticated search:
-
-```bash
-curl -X POST http://localhost:8000/search \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"corpus_id": 1, "question": "What are the key findings?", "limit": 5}'
-```
-
-## Data model
-
-- A `User` owns many `Corpus` records.
-- A `Corpus` contains documents and chat messages.
-- A `Document` stores upload metadata, extracted pages, and text chunks.
-- Each `DocumentChunk` has one persisted embedding record.
-- Each assistant `ChatMessage` stores the citations used for its answer.
-
-Deleting a corpus cascades through its relational records and also removes its
-Chroma collection.
-
-## Database migrations
-
-Migrations run automatically when the FastAPI application starts. They can
-also be run manually:
+The backend runs migration logic during FastAPI startup. For manual migration:
 
 ```bash
 cd backend
-python -m alembic upgrade head
+alembic upgrade head
 ```
 
-Set `DATABASE_URL` before running the command when targeting PostgreSQL.
+Fresh databases are created from SQLAlchemy metadata and stamped at Alembic head. Existing databases are upgraded through Alembic. PostgreSQL startup uses an advisory lock to reduce concurrent migration conflicts.
 
-## Deployment notes
+## API Overview
 
-`backend/render.yaml` contains a Render web service definition that installs
-the CPU build of PyTorch, installs backend dependencies, applies migrations,
-and starts Uvicorn.
+Most endpoints require `Authorization: Bearer <access_token>`.
 
-For a production deployment:
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Health check |
+| `POST` | `/auth/register` | Create account |
+| `POST` | `/auth/login` | Login |
+| `GET` | `/auth/me` | Return current user |
+| `PATCH` | `/auth/profile` | Update display name |
+| `GET` | `/corpora` | List user corpora |
+| `POST` | `/corpora` | Create corpus |
+| `DELETE` | `/corpora/{corpus_id}` | Delete corpus |
+| `GET` | `/corpora/{corpus_id}/documents` | List documents and corpus metrics |
+| `POST` | `/corpora/{corpus_id}/upload` | Upload and index PDF |
+| `POST` | `/search` | Retrieve relevant chunks |
+| `POST` | `/answer` | Generate grounded answer |
+| `GET` | `/history` | Retrieve chat history |
+| `POST` | `/comparisons` | Compare multiple documents |
+| `GET` | `/comparisons` | List comparisons |
+| `GET` | `/comparisons/{id}` | Get comparison details |
+| `POST` | `/comparisons/{id}/ask` | Ask questions across compared documents |
 
-- Set `DATABASE_URL`, `GROQ_API_KEY`, and a strong `JWT_SECRET_KEY`.
-- Attach persistent storage for `uploads/` and `chroma/`; otherwise uploaded
-  files and vector indexes may be lost when an instance is replaced.
-- Set `BACKEND_URL` in the frontend to the public API URL.
-- Add the deployed frontend origin to the backend CORS allowlist in
-  `backend/app/main.py`.
-- Keep `EMBEDDING_BACKEND` consistent after documents have been indexed.
-  Query vectors must have the same dimensions as stored vectors.
+## Folder Structure
 
-## Current limitations
+```text
+.
+├── backend/
+│   ├── alembic/              # Database migrations
+│   ├── app/
+│   │   ├── api/              # FastAPI routes and dependencies
+│   │   ├── core/             # Config and security
+│   │   ├── crud/             # Data access functions
+│   │   ├── db/               # Engine, sessions, migration startup
+│   │   ├── models/           # SQLAlchemy models
+│   │   ├── schemas/          # Pydantic request/response models
+│   │   └── services/         # PDF, chunking, embedding, vector, LLM, comparison
+│   ├── render.yaml
+│   └── requirements.txt
+├── frontend/
+│   ├── app.py                # Streamlit application
+│   ├── styles.py             # Design system CSS and UI helpers
+│   └── requirements.txt
+└── docs/
+```
 
-- Only PDF uploads are supported.
-- Scanned documents are not OCR-processed.
-- Corpus editing and visibility controls in the Streamlit settings page are
-  placeholders.
-- File uploads and ChromaDB are stored on the local filesystem.
-- There is currently no automated test suite.
+## Screenshots
+
+Add screenshots before submission:
+
+- `screenshots/login.png`
+- `screenshots/corpus-dashboard.png`
+- `screenshots/corpus-detail.png`
+- `screenshots/corpus-chat.png`
+- `screenshots/compare-documents.png`
+- `screenshots/chat-history.png`
+- `screenshots/settings.png`
+
+## Future Scope
+
+- OCR support for scanned PDFs.
+- Streaming LLM responses.
+- Role-based team workspaces.
+- Exportable chat and comparison reports.
+- Dedicated evaluation dashboard for answer quality.
+- Stronger semantic evaluation metrics.
+- Object storage for uploaded files in production.
+- Managed vector database deployment.
+
+## Contributors
+
+- Ayushman Rathi
+- New Age Software Engineering Program by iHUB DivyaSampark
+
+## License
+
+Unable to determine from the repository. Add a `LICENSE` file before public release.
+
+## Documentation Index
+
+See [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md) for the complete generated documentation package.

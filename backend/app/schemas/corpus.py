@@ -1,4 +1,6 @@
 import re
+from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -22,6 +24,8 @@ class CorpusResponse(BaseModel):
     name: str
     description: str
     document_count: int
+    total_storage_bytes: int = 0
+    updated_at: Optional[datetime] = None
 
 
 class CorpusDeleteResponse(BaseModel):
