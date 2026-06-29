@@ -102,6 +102,10 @@ p { color: var(--dk-muted); }
   border-color: var(--dk-primary) !important;
   box-shadow: 0 0 0 3px rgba(195,192,255,.12) !important;
 }
+.stTextInput input.dk-email-invalid {
+  border-color: var(--dk-error) !important;
+  box-shadow: 0 0 0 3px rgba(255,180,171,.14) !important;
+}
 .stTextInput input::placeholder, .stTextArea textarea::placeholder {
   color: rgba(145,143,161,.56) !important;
 }

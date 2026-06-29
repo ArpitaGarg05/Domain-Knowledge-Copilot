@@ -50,6 +50,11 @@ AUTH_COOKIE_SECURE = os.getenv("AUTH_COOKIE_SECURE", "").lower() in {
     "true",
     "yes",
 }
+EMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z]{2,63}$"
+)
 PAGES = [
     "Corpus Dashboard",
     "Corpus Detail",
@@ -448,6 +453,9 @@ def humanize_api_error(detail: Any) -> str:
                 location = item.get("loc", [])
                 field = str(location[-1]).replace("_", " ") if location else "Input"
                 message = clean_validation_message(str(item.get("msg", "is invalid")))
+                if field.lower() == "email":
+                    messages.append("Please enter a valid email address.")
+                    continue
                 if message.lower().startswith(field.lower()) or "corpus name" in message.lower():
                     messages.append(message)
                 else:
@@ -468,6 +476,8 @@ def humanize_api_error(detail: Any) -> str:
     normalized = message.lower()
     if "invalid email or password" in normalized or "incorrect username or password" in normalized:
         return "Incorrect email or password."
+    if "valid email" in normalized or "email address" in normalized:
+        return "Please enter a valid email address."
     if "user with this email already exists" in normalized or "already exists" in normalized:
         return "An account with this email already exists."
     if "field required" in normalized:
@@ -480,6 +490,68 @@ def clean_validation_message(message: str) -> str:
     if cleaned.lower().startswith("value error,"):
         cleaned = cleaned.split(",", 1)[1].strip()
     return cleaned.rstrip(".") + "."
+
+
+def is_valid_email(email: str) -> bool:
+    value = email.strip()
+    if not value or " " in value:
+        return False
+    local_part = value.split("@", 1)[0] if "@" in value else ""
+    if (
+        local_part.startswith(".")
+        or local_part.endswith(".")
+        or ".." in local_part
+    ):
+        return False
+    return bool(EMAIL_PATTERN.fullmatch(value))
+
+
+def render_email_error(email: str, *, submitted: bool) -> bool:
+    has_value = bool(email.strip())
+    invalid = (has_value or submitted) and not is_valid_email(email)
+    if invalid:
+        st.error("Please enter a valid email address.")
+    return invalid
+
+
+def enhance_email_inputs(invalid_placeholders: list[str]) -> None:
+    placeholders = json.dumps(invalid_placeholders)
+    components.html(
+        f"""
+        <script>
+          const invalidPlaceholders = new Set({placeholders});
+          const doc = window.parent.document;
+          const authEmailPlaceholders = [
+            "name@example.com",
+            "name@organization.ai"
+          ];
+
+          authEmailPlaceholders.forEach((placeholder) => {{
+            const input = doc.querySelector(`input[placeholder="${{placeholder}}"]`);
+            if (!input) return;
+            input.setAttribute("type", "email");
+            input.setAttribute("inputmode", "email");
+            input.setAttribute("autocomplete", "email");
+            input.classList.toggle(
+              "dk-email-invalid",
+              invalidPlaceholders.has(placeholder)
+            );
+            input.setAttribute(
+              "aria-invalid",
+              invalidPlaceholders.has(placeholder) ? "true" : "false"
+            );
+          }});
+
+          doc.querySelectorAll('input[aria-label="Email"], input[aria-label="User email"]').forEach((input) => {{
+            input.setAttribute("type", "email");
+            input.setAttribute("inputmode", "email");
+            input.setAttribute("autocomplete", "email");
+          }});
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def set_auth_tab(tab: str) -> None:
@@ -511,22 +583,32 @@ def render_auth_page() -> None:
 
             if auth_tab == "Login":
                 st.caption("Log in to continue.")
-                with st.form("login-form"):
-                    email = st.text_input(
-                        "Email",
-                        placeholder="name@example.com",
-                    )
-                    password = st.text_input(
-                        "Password",
-                        type="password",
-                        placeholder="••••••••••••",
-                    )
-                    submitted = st.form_submit_button(
-                        "Login",
-                        type="primary",
-                        use_container_width=True,
-                    )
+                email = st.text_input(
+                    "Email",
+                    placeholder="name@example.com",
+                    key="login_email",
+                )
+                login_email_invalid = render_email_error(
+                    email,
+                    submitted=bool(st.session_state.get("login_email_attempted")),
+                )
+                password = st.text_input(
+                    "Password",
+                    type="password",
+                    placeholder="••••••••••••",
+                    key="login_password",
+                )
+                submitted = st.button(
+                    "Login",
+                    type="primary",
+                    use_container_width=True,
+                    key="login-submit",
+                )
+                enhance_email_inputs(["name@example.com"] if login_email_invalid else [])
                 if submitted:
+                    if not is_valid_email(email):
+                        st.session_state.login_email_attempted = True
+                        st.rerun()
                     try:
                         with st.spinner("Logging in..."):
                             auth_response = login_user(email.strip(), password)
@@ -544,28 +626,39 @@ def render_auth_page() -> None:
 
             else:
                 st.caption("Create your account to get started.")
-                with st.form("register-form"):
-                    display_name = st.text_input(
-                        "User name",
-                        placeholder="Full name",
-                    )
-                    email = st.text_input(
-                        "User email",
-                        placeholder="name@organization.ai",
-                        key="register_email",
-                    )
-                    password = st.text_input(
-                        "Password",
-                        type="password",
-                        placeholder="Minimum 8 characters",
-                        key="register_password",
-                    )
-                    submitted = st.form_submit_button(
-                        "Sign Up",
-                        type="primary",
-                        use_container_width=True,
-                    )
+                display_name = st.text_input(
+                    "User name",
+                    placeholder="Full name",
+                    key="register_display_name",
+                )
+                email = st.text_input(
+                    "User email",
+                    placeholder="name@organization.ai",
+                    key="register_email",
+                )
+                register_email_invalid = render_email_error(
+                    email,
+                    submitted=bool(st.session_state.get("register_email_attempted")),
+                )
+                password = st.text_input(
+                    "Password",
+                    type="password",
+                    placeholder="Minimum 8 characters",
+                    key="register_password",
+                )
+                submitted = st.button(
+                    "Sign Up",
+                    type="primary",
+                    use_container_width=True,
+                    key="register-submit",
+                )
+                enhance_email_inputs(
+                    ["name@organization.ai"] if register_email_invalid else []
+                )
                 if submitted:
+                    if not is_valid_email(email):
+                        st.session_state.register_email_attempted = True
+                        st.rerun()
                     try:
                         with st.spinner("Signing up..."):
                             auth_response = register_user(
@@ -1715,6 +1808,7 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
                     type="primary",
                     use_container_width=True,
                 )
+            enhance_email_inputs([])
             if submitted:
                 try:
                     updated = update_profile(display_name.strip())
