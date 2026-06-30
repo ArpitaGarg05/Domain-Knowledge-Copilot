@@ -59,6 +59,7 @@ from app.services.comparison_service import (
     ComparisonService,
     ComparisonValidationError,
 )
+from app.services.corpus_deletion_service import CorpusDeletionService
 from app.services.embedding_service import EmbeddingService
 from app.services.llm_service import (
     LLMConfigurationError,
@@ -183,21 +184,37 @@ def create_corpus(
     return build_corpus_response(corpus)
 
 
+@router.delete("/api/corpora/{corpus_id}", response_model=CorpusDeleteResponse)
 @router.delete("/corpora/{corpus_id}", response_model=CorpusDeleteResponse)
 def delete_corpus(
     corpus_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CorpusDeleteResponse:
-    deleted = corpus_crud.delete_corpus(db, corpus_id, owner_id=current_user.id)
-    if not deleted:
+    try:
+        result = CorpusDeletionService().delete_user_corpus(
+            db,
+            corpus_id=corpus_id,
+            owner_id=current_user.id,
+        )
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+    if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Corpus not found.",
         )
 
-    VectorStoreService().delete_collection(corpus_id)
-    return CorpusDeleteResponse(id=corpus_id, deleted=True)
+    return CorpusDeleteResponse(
+        id=corpus_id,
+        deleted=True,
+        deleted_files=len(result.deleted_file_paths),
+        deleted_comparisons=len(result.deleted_comparison_ids),
+    )
 
 
 def build_document_summary(document) -> DocumentSummaryResponse:

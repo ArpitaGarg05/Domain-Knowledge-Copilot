@@ -186,7 +186,7 @@ def is_valid_corpus_name(name: str) -> bool:
 
 
 def delete_corpus(corpus_id: int) -> dict[str, Any]:
-    return request_json("DELETE", f"/corpora/{corpus_id}")
+    return request_json("DELETE", f"/api/corpora/{corpus_id}")
 
 
 def upload_pdf(corpus_id: int, uploaded_file: Any) -> dict[str, Any]:
@@ -385,6 +385,85 @@ def queue_navigation(
         st.session_state.pending_selected_corpus_id = corpus_id
     if conversation_id is not None:
         st.session_state.pending_conversation_id = conversation_id
+
+
+def request_corpus_delete(corpus_id: int) -> None:
+    st.session_state.pending_delete_corpus_id = corpus_id
+
+
+def complete_corpus_delete(corpus_id: int) -> None:
+    response = delete_corpus(corpus_id)
+    if str(st.session_state.get("selected_corpus_id")) == str(corpus_id):
+        st.session_state.pop("selected_corpus_id", None)
+    st.session_state.pop("active_conversation_id", None)
+    st.session_state.pop("active_comparison_id", None)
+    st.session_state.pop("latest_comparison_result", None)
+    st.session_state.pop("pending_delete_corpus_id", None)
+    st.session_state.corpus_delete_success = response.get(
+        "message",
+        "Corpus permanently deleted.",
+    )
+    queue_navigation("Corpus Dashboard")
+
+
+@st.dialog("Delete Corpus")
+def render_corpus_delete_dialog(corpus: dict[str, Any]) -> None:
+    corpus_id = int(corpus["id"])
+    st.warning(
+        "This action is permanent and cannot be undone. Deleting this corpus "
+        "will remove uploaded PDFs, extracted text, searchable sections, "
+        "embeddings, vector data, chat history, document comparisons, generated "
+        "summaries, cached responses, and temporary files associated with this "
+        "workspace."
+    )
+    st.markdown(f"**Workspace:** {corpus['name']}")
+    confirm = st.checkbox(
+        "I understand this deletion is irreversible.",
+        key=f"delete-dialog-confirm-{corpus_id}",
+    )
+    action, cancel = st.columns(2)
+    with action:
+        if st.button(
+            "🗑️ Permanently Delete",
+            type="primary",
+            disabled=not confirm,
+            use_container_width=True,
+            key=f"delete-dialog-submit-{corpus_id}",
+        ):
+            try:
+                with st.spinner("Deleting corpus and reclaiming storage..."):
+                    complete_corpus_delete(corpus_id)
+                st.rerun()
+            except requests.RequestException as error:
+                render_api_error(error)
+    with cancel:
+        if st.button(
+            "Cancel",
+            use_container_width=True,
+            key=f"delete-dialog-cancel-{corpus_id}",
+        ):
+            st.session_state.pop("pending_delete_corpus_id", None)
+            st.rerun()
+
+
+def render_pending_corpus_delete_dialog(corpora: list[dict[str, Any]]) -> None:
+    pending_id = st.session_state.get("pending_delete_corpus_id")
+    if pending_id is None:
+        return
+    corpus = next(
+        (item for item in corpora if str(item["id"]) == str(pending_id)),
+        None,
+    )
+    if corpus is None:
+        st.session_state.pop("pending_delete_corpus_id", None)
+        return
+    render_corpus_delete_dialog(corpus)
+
+
+def render_flash_messages() -> None:
+    success = st.session_state.pop("corpus_delete_success", None)
+    if success:
+        st.success(success)
 
 
 def apply_pending_navigation(corpora: list[dict[str, Any]]) -> None:
@@ -821,13 +900,23 @@ def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.button(
-            "Open Workspace",
-            key=f"open-corpus-{corpus['id']}-{index}",
-            use_container_width=True,
-            on_click=queue_navigation,
-            args=("Corpus Detail", int(corpus["id"])),
-        )
+        open_action, delete_action = st.columns([1, 0.72])
+        with open_action:
+            st.button(
+                "Open Workspace",
+                key=f"open-corpus-{corpus['id']}-{index}",
+                use_container_width=True,
+                on_click=queue_navigation,
+                args=("Corpus Detail", int(corpus["id"])),
+            )
+        with delete_action:
+            st.button(
+                "🗑️ Delete",
+                key=f"delete-corpus-card-{corpus['id']}-{index}",
+                use_container_width=True,
+                on_click=request_corpus_delete,
+                args=(int(corpus["id"]),),
+            )
 
 
 def render_create_corpus(form_key: str) -> None:
@@ -1000,6 +1089,13 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
         storage_usage_metric(total_storage_bytes),
     ]
     metric_grid(metrics)
+    st.button(
+        "🗑️ Delete Corpus",
+        key=f"delete-corpus-detail-{corpus['id']}",
+        use_container_width=False,
+        on_click=request_corpus_delete,
+        args=(int(corpus["id"]),),
+    )
 
     inventory, action = st.columns([1.45, 1], gap="large")
     with inventory:
@@ -1852,18 +1948,14 @@ def render_settings(corpora: list[dict[str, Any]]) -> None:
                     f"I understand that deleting {corpus['name']} cannot be undone",
                     key=f"confirm-delete-{corpus['id']}",
                 )
-                if st.button(
+                st.button(
                     "Delete Active Corpus",
                     disabled=not confirm,
                     use_container_width=True,
-                ):
-                    try:
-                        delete_corpus(int(corpus["id"]))
-                        st.session_state.pop("selected_corpus_id", None)
-                        queue_navigation("Corpus Dashboard")
-                        st.rerun()
-                    except requests.RequestException as error:
-                        render_api_error(error)
+                    on_click=request_corpus_delete,
+                    args=(int(corpus["id"]),),
+                    key=f"settings-delete-active-{corpus['id']}",
+                )
 
     with preferences:
         with st.container(border=True):
@@ -1903,6 +1995,8 @@ except requests.RequestException as error:
 
 apply_pending_navigation(corpora)
 page = render_sidebar(corpora)
+render_flash_messages()
+render_pending_corpus_delete_dialog(corpora)
 
 if page == "Corpus Dashboard":
     render_dashboard(corpora)

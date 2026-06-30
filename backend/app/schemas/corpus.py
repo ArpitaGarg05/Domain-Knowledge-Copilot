@@ -31,3 +31,6 @@ class CorpusResponse(BaseModel):
 class CorpusDeleteResponse(BaseModel):
     id: int
     deleted: bool
+    message: str = "Corpus permanently deleted."
+    deleted_files: int = 0
+    deleted_comparisons: int = 0
