@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
+from app.core.config import settings
 from app.db.init_db import run_migrations
 import logging
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("===== Application startup =====")
+    logger.info("===== Application startup: version=%s =====", settings.app_version)
 
     logger.info("Calling run_migrations()")
     run_migrations()
@@ -49,9 +50,10 @@ def root():
         "name": "Domain Knowledge Copilot API",
         "status": "ok",
         "health": "/health",
+        "version": settings.app_version,
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": settings.app_version}

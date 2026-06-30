@@ -27,6 +27,10 @@ class Settings(BaseModel):
     )
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
+    app_version: str = os.getenv(
+        "APP_VERSION",
+        os.getenv("RAILWAY_GIT_COMMIT_SHA", "development"),
+    )
 
 
 settings = Settings()
