@@ -142,9 +142,22 @@ def build_corpus_response(corpus: Corpus) -> CorpusResponse:
         name=corpus.name,
         description=corpus.description,
         document_count=len(corpus.documents),
-        total_storage_bytes=sum(document.file_size_bytes for document in corpus.documents),
+        total_storage_bytes=sum(
+            get_document_file_size_bytes(document)
+            for document in corpus.documents
+        ),
         updated_at=corpus.updated_at,
     )
+
+
+def get_document_file_size_bytes(document) -> int:
+    source_path = Path(document.source_path) if document.source_path else None
+    if source_path is None:
+        return 0
+    try:
+        return source_path.stat().st_size
+    except OSError:
+        return 0
 
 
 @router.get("/corpora", response_model=list[CorpusResponse])
@@ -188,14 +201,6 @@ def delete_corpus(
 
 
 def build_document_summary(document) -> DocumentSummaryResponse:
-    source_path = Path(document.source_path) if document.source_path else None
-    file_size_bytes = 0
-    if source_path is not None:
-        try:
-            file_size_bytes = source_path.stat().st_size
-        except OSError:
-            file_size_bytes = 0
-
     if document.chunk_count == 0:
         indexing_status = "empty"
     elif document.embedding_count == document.chunk_count:
@@ -212,7 +217,7 @@ def build_document_summary(document) -> DocumentSummaryResponse:
         page_count=document.page_count,
         chunk_count=document.chunk_count,
         embedding_count=document.embedding_count,
-        file_size_bytes=file_size_bytes,
+        file_size_bytes=get_document_file_size_bytes(document),
         indexing_status=indexing_status,
     )
 
