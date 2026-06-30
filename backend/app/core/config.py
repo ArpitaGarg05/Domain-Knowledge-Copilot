@@ -15,6 +15,12 @@ class Settings(BaseModel):
     groq_model: str = "llama-3.3-70b-versatile"
     embedding_backend: str = os.getenv("EMBEDDING_BACKEND", "hash")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    debug_retrieval: bool = os.getenv("DEBUG_RETRIEVAL", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    retrieval_log_chars: int = int(os.getenv("RETRIEVAL_LOG_CHARS", "240"))
     jwt_secret_key: str = os.getenv(
         "JWT_SECRET_KEY",
         "development-only-change-me",

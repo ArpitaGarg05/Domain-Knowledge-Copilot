@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Optional
 from uuid import UUID, uuid4
@@ -73,6 +74,7 @@ from app.services.pdf_processor import extract_pdf_text
 from app.services.vector_store_service import VectorStoreService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -155,6 +157,10 @@ def build_corpus_response(corpus: Corpus) -> CorpusResponse:
 
 
 def get_document_file_size_bytes(document) -> int:
+    persisted_size = getattr(document, "file_size_bytes", 0) or 0
+    if persisted_size > 0:
+        return persisted_size
+
     source_path = Path(document.source_path) if document.source_path else None
     if source_path is None:
         return 0
@@ -673,6 +679,14 @@ def upload_document(
 
     with destination.open("wb") as output_file:
         output_file.write(file.file.read())
+    file_size_bytes = destination.stat().st_size
+    logger.info(
+        "Stored uploaded PDF: corpus_id=%s filename=%s stored_path=%s file_size_bytes=%s",
+        corpus_id,
+        original_filename,
+        destination,
+        file_size_bytes,
+    )
 
     try:
         extracted_pages = extract_pdf_text(destination)
@@ -683,19 +697,61 @@ def upload_document(
             detail="Could not extract text from the uploaded PDF.",
         ) from error
 
+    extracted_text_length = sum(len(page.text or "") for page in extracted_pages)
+    logger.info(
+        "Extracted PDF text: corpus_id=%s filename=%s pages=%s extracted_text_length=%s",
+        corpus_id,
+        original_filename,
+        len(extracted_pages),
+        extracted_text_length,
+    )
+
     chunks = ChunkService().chunk_pages(extracted_pages)
+    logger.info(
+        "Chunked PDF text: corpus_id=%s filename=%s chunks=%s",
+        corpus_id,
+        original_filename,
+        len(chunks),
+    )
     embeddings = EmbeddingService().embed_chunks(chunks)
+    logger.info(
+        "Generated embeddings: corpus_id=%s filename=%s embeddings=%s chunks=%s",
+        corpus_id,
+        original_filename,
+        len(embeddings),
+        len(chunks),
+    )
 
     document = document_crud.create_document(
         db=db,
         corpus_id=corpus_id,
         filename=original_filename,
         source_path=str(destination),
+        file_size_bytes=file_size_bytes,
         pages=extracted_pages,
         chunks=chunks,
         embeddings=embeddings,
     )
-    VectorStoreService().add_document_chunks(corpus_id=corpus_id, document=document)
+    stored_vectors = VectorStoreService().add_document_chunks(
+        corpus_id=corpus_id,
+        document=document,
+    )
+    logger.info(
+        "Indexed document vectors: corpus_id=%s document_id=%s chunks=%s embeddings=%s stored_vectors=%s",
+        corpus_id,
+        document.id,
+        document.chunk_count,
+        document.embedding_count,
+        stored_vectors,
+    )
+    if document.chunk_count and document.embedding_count != document.chunk_count:
+        logger.warning(
+            "Document marked partially indexed: corpus_id=%s document_id=%s chunks=%s embeddings=%s",
+            corpus_id,
+            document.id,
+            document.chunk_count,
+            document.embedding_count,
+        )
     return DocumentResponse.model_validate(document)
 
 
@@ -720,6 +776,13 @@ def search_corpus(
         corpus_id=request.corpus_id,
         query_text=request.question,
         limit=request.limit,
+    )
+    logger.info(
+        "Search retrieved chunks: corpus_id=%s query=%r requested_limit=%s retrieved=%s",
+        request.corpus_id,
+        request.question,
+        request.limit,
+        len(results),
     )
     return [
         build_retrieved_chunk_response(result)
@@ -787,7 +850,23 @@ def answer_question(
         query_text=request.question,
         limit=request.limit,
     )
+    logger.info(
+        "Answer retrieval complete: corpus_id=%s conversation_id=%s query=%r requested_limit=%s retrieved=%s",
+        request.corpus_id,
+        conversation_id,
+        request.question,
+        request.limit,
+        len(retrieved_chunks),
+    )
     sources = [build_retrieved_chunk_response(result) for result in retrieved_chunks]
+    logger.info(
+        "Passing retrieved context to LLM: corpus_id=%s conversation_id=%s chunks=%s context_chars=%s source_documents=%s",
+        request.corpus_id,
+        conversation_id,
+        len(retrieved_chunks),
+        sum(len(chunk.text or "") for chunk in retrieved_chunks),
+        sorted({chunk.filename for chunk in retrieved_chunks}),
+    )
     recent_messages = chat_message_crud.list_chat_messages(
         db,
         user_id=current_user.id,

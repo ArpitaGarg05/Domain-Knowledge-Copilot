@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -10,6 +11,8 @@ from app.services.embedding_service import EmbeddingService
 if TYPE_CHECKING:
     from chromadb.api import ClientAPI
     from chromadb.api.models.Collection import Collection
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -46,7 +49,7 @@ class VectorStoreService:
         if collection_name in existing_names:
             self.client.delete_collection(name=collection_name)
 
-    def add_document_chunks(self, corpus_id: int, document: Document) -> None:
+    def add_document_chunks(self, corpus_id: int, document: Document) -> int:
         collection = self.get_or_create_collection(corpus_id)
 
         ids: list[str] = []
@@ -75,13 +78,30 @@ class VectorStoreService:
                 }
             )
 
-        if ids:
-            collection.upsert(
-                ids=ids,
-                embeddings=embeddings,
-                documents=documents,
-                metadatas=metadatas,
+        if not ids:
+            logger.warning(
+                "No chunk embeddings to store: corpus_id=%s document_id=%s filename=%s chunks=%s",
+                corpus_id,
+                document.id,
+                document.filename,
+                len(document.chunks),
             )
+            return 0
+
+        collection.upsert(
+            ids=ids,
+            embeddings=embeddings,
+            documents=documents,
+            metadatas=metadatas,
+        )
+        logger.info(
+            "Stored chunk embeddings in vector database: corpus_id=%s collection=%s document_id=%s vectors=%s",
+            corpus_id,
+            self.collection_name(corpus_id),
+            document.id,
+            len(ids),
+        )
+        return len(ids)
 
     def retrieve_by_embedding(
         self,
@@ -107,7 +127,15 @@ class VectorStoreService:
         if where_filter is not None:
             query_kwargs["where"] = where_filter
         result = collection.query(**query_kwargs)
-        return self._format_results(result)
+        results = self._format_results(result)
+        self._log_retrieval_results(
+            corpus_id=corpus_id,
+            query_text=None,
+            results=results,
+            limit=limit,
+            document_ids=document_ids,
+        )
+        return results
 
     def retrieve_by_text(
         self,
@@ -121,11 +149,18 @@ class VectorStoreService:
         if not query_embedding:
             return []
 
-        return self.retrieve_by_embedding(
+        results = self.retrieve_by_embedding(
             corpus_id=corpus_id,
             query_embedding=query_embedding[0].vector,
             limit=limit,
         )
+        self._log_retrieval_results(
+            corpus_id=corpus_id,
+            query_text=query_text,
+            results=results,
+            limit=limit,
+        )
+        return results
 
     def retrieve_by_text_for_documents(
         self,
@@ -159,6 +194,40 @@ class VectorStoreService:
                 retrieved.extend(grouped[document_id][:limit_per_document])
 
         return retrieved
+
+    def _log_retrieval_results(
+        self,
+        *,
+        corpus_id: int,
+        query_text: Optional[str],
+        results: list[RetrievalResult],
+        limit: int,
+        document_ids: Optional[list[int]] = None,
+    ) -> None:
+        logger.info(
+            "Retrieved chunks from vector database: corpus_id=%s document_ids=%s query=%r limit=%s retrieved=%s",
+            corpus_id,
+            document_ids,
+            query_text,
+            limit,
+            len(results),
+        )
+        if not settings.debug_retrieval:
+            return
+
+        max_chars = max(settings.retrieval_log_chars, 0)
+        for result in results:
+            preview = result.text[:max_chars].replace("\n", " ")
+            logger.debug(
+                "Retrieved chunk content: corpus_id=%s document_id=%s filename=%s page=%s chunk_id=%s distance=%s text=%r",
+                result.corpus_id,
+                result.document_id,
+                result.filename,
+                result.page_number,
+                result.chunk_id,
+                result.distance,
+                preview,
+            )
 
     def retrieve_evidence_for_texts(
         self,
@@ -214,7 +283,7 @@ class VectorStoreService:
         distances = result.get("distances", [[]])[0]
 
         formatted_results: list[RetrievalResult] = []
-        for text, metadata, distance in zip(documents, metadatas, distances, strict=True):
+        for text, metadata, distance in zip(documents, metadatas, distances):
             formatted_results.append(
                 RetrievalResult(
                     chunk_id=int(metadata["chunk_id"]),
@@ -255,7 +324,7 @@ class VectorStoreService:
         distances: list[Optional[float]],
     ) -> list[RetrievalResult]:
         formatted_results: list[RetrievalResult] = []
-        for text, metadata, distance in zip(documents, metadatas, distances, strict=True):
+        for text, metadata, distance in zip(documents, metadatas, distances):
             formatted_results.append(
                 RetrievalResult(
                     chunk_id=int(metadata["chunk_id"]),

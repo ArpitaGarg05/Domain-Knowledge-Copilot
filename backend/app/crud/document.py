@@ -53,6 +53,7 @@ def create_document(
     corpus_id: int,
     filename: str,
     source_path: str,
+    file_size_bytes: int,
     pages: list[ExtractedPdfPage],
     chunks: list[TextChunk],
     embeddings: list[EmbeddedChunk],
@@ -66,6 +67,7 @@ def create_document(
         title=filename,
         filename=filename,
         source_path=source_path,
+        file_size_bytes=file_size_bytes,
         content_preview=extracted_text[:500],
         page_count=len(pages),
         pages=[

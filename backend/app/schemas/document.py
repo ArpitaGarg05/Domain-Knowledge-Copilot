@@ -14,10 +14,10 @@ class DocumentResponse(BaseModel):
     page_count: int
     chunk_count: int
     embedding_count: int
+    file_size_bytes: int
 
 
 class DocumentSummaryResponse(DocumentResponse):
-    file_size_bytes: int
     indexing_status: str
 
 

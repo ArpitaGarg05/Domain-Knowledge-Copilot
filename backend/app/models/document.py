@@ -15,6 +15,7 @@ class Document(Base):
     title: Mapped[str] = mapped_column(String(255))
     filename: Mapped[str] = mapped_column(String(255))
     source_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, default=0)
     content_preview: Mapped[str] = mapped_column(Text, default="")
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

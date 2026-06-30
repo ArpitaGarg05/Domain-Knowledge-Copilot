@@ -86,7 +86,7 @@ class EmbeddingService:
                 model_name=self.model_name,
                 vector=vector.astype(float).tolist(),
             )
-            for chunk, vector in zip(chunks, vectors, strict=True)
+            for chunk, vector in zip(chunks, vectors)
         ]
 
     def _hash_embedding(self, text: str) -> list[float]:
