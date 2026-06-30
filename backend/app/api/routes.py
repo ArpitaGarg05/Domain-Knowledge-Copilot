@@ -3,6 +3,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -435,6 +436,48 @@ def list_corpus_documents(
         total_chunks=sum(document.chunk_count for document in documents),
         total_embeddings=sum(document.embedding_count for document in documents),
         total_storage_bytes=sum(document.file_size_bytes for document in documents),
+    )
+
+
+@router.get("/api/corpora/{corpus_id}/documents/{document_id}/preview")
+def preview_document_pdf(
+    corpus_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    corpus = corpus_crud.get_corpus(db, corpus_id)
+    if corpus is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Corpus not found.",
+        )
+    if corpus.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to preview this document.",
+        )
+
+    document = document_crud.get_document(db, document_id)
+    if document is None or document.corpus_id != corpus_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    source_path = Path(document.source_path) if document.source_path else None
+    if source_path is None or not source_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF file not found.",
+        )
+
+    return FileResponse(
+        path=source_path,
+        media_type="application/pdf",
+        filename=document.filename,
+        content_disposition_type="inline",
+        headers={"Accept-Ranges": "bytes"},
     )
 
 

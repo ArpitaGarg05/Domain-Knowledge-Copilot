@@ -229,6 +229,10 @@ def upload_pdf(corpus_id: int, uploaded_file: Any) -> dict[str, Any]:
     )
 
 
+def document_preview_url(corpus_id: int, document_id: int) -> str:
+    return api_url(f"/api/corpora/{corpus_id}/documents/{document_id}/preview")
+
+
 def answer_question(
     corpus_id: int,
     question: str,
@@ -420,6 +424,13 @@ def request_corpus_rename(corpus_id: int) -> None:
     st.session_state.pop(f"rename-corpus-name-{corpus_id}", None)
 
 
+def request_document_preview(corpus_id: int, document: dict[str, Any]) -> None:
+    st.session_state.pending_preview_document = {
+        "corpus_id": corpus_id,
+        "document": document,
+    }
+
+
 def complete_corpus_rename(corpus_id: int, name: str) -> None:
     updated = rename_corpus(corpus_id, name.strip())
     st.session_state.pop("pending_rename_corpus_id", None)
@@ -442,6 +453,334 @@ def complete_corpus_delete(corpus_id: int) -> None:
         "Corpus permanently deleted.",
     )
     queue_navigation("Corpus Dashboard")
+
+
+@st.dialog("PDF Preview")
+def render_pdf_preview_dialog(corpus_id: int, document: dict[str, Any]) -> None:
+    document_id = int(document["id"])
+    filename = str(document.get("filename", "Document.pdf"))
+    preview_url = document_preview_url(corpus_id, document_id)
+    token = st.session_state.get("access_token", "")
+    uploaded_at = format_datetime(document.get("uploaded_at"))
+    file_size = format_bytes(int(document.get("file_size_bytes") or 0))
+    page_count = int(document.get("page_count") or 0)
+
+    st.markdown(
+        f"""
+        <div class="dk-preview-meta">
+          <h3 title="{escape(filename)}">{escape(filename)}</h3>
+          <div>
+            <span>{escape(file_size)}</span>
+            <span>Uploaded {escape(uploaded_at)}</span>
+            <span>{page_count:,} page{'s' if page_count != 1 else ''}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_pdf_viewer_component(
+        preview_url=preview_url,
+        token=token,
+        filename=filename,
+    )
+    if st.button(
+        "Close",
+        key=f"close-preview-{corpus_id}-{document_id}",
+        use_container_width=True,
+    ):
+        st.session_state.pop("pending_preview_document", None)
+        st.rerun()
+
+
+def render_pending_pdf_preview_dialog() -> None:
+    pending = st.session_state.get("pending_preview_document")
+    if not pending:
+        return
+    render_pdf_preview_dialog(
+        int(pending["corpus_id"]),
+        pending["document"],
+    )
+
+
+def render_pdf_viewer_component(
+    *,
+    preview_url: str,
+    token: str,
+    filename: str,
+) -> None:
+    component_id = f"pdf-preview-{abs(hash(preview_url))}"
+    components.html(
+        f"""
+        <div id="{component_id}" class="pdf-preview-shell">
+          <div class="pdf-preview-toolbar">
+            <button id="prevPage" type="button">Previous</button>
+            <span id="pageInfo">Loading PDF...</span>
+            <button id="nextPage" type="button">Next</button>
+            <span class="divider"></span>
+            <button id="zoomOut" type="button">−</button>
+            <button id="zoomIn" type="button">+</button>
+            <button id="fitWidth" type="button">Fit Width</button>
+            <button id="fitPage" type="button">Fit Page</button>
+            <button id="rotate" type="button">Rotate</button>
+            <button id="fullscreen" type="button">Full Screen</button>
+            <button id="downloadPdf" type="button">Download</button>
+          </div>
+          <div id="loadingState" class="pdf-preview-loading">Fetching and rendering PDF...</div>
+          <div id="errorState" class="pdf-preview-error" hidden></div>
+          <div id="viewer" class="pdf-preview-canvas-wrap">
+            <canvas id="pdfCanvas"></canvas>
+          </div>
+        </div>
+        <style>
+          .pdf-preview-shell {{
+            min-height: 720px;
+            border: 1px solid rgba(70,69,85,.72);
+            border-radius: 14px;
+            background: #010f1f;
+            overflow: hidden;
+            color: #d4e4fa;
+            font-family: Geist, system-ui, sans-serif;
+          }}
+          .pdf-preview-toolbar {{
+            position: sticky;
+            top: 0;
+            z-index: 3;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid rgba(70,69,85,.72);
+            background: rgba(13,28,45,.96);
+          }}
+          .pdf-preview-toolbar button {{
+            border: 1px solid #464555;
+            border-radius: 8px;
+            background: #0d1c2d;
+            color: #d4e4fa;
+            min-height: 34px;
+            padding: 0 10px;
+            font-weight: 600;
+            cursor: pointer;
+          }}
+          .pdf-preview-toolbar button:hover {{
+            border-color: #c3c0ff;
+            color: #c3c0ff;
+          }}
+          .pdf-preview-toolbar button:disabled {{
+            opacity: .45;
+            cursor: not-allowed;
+          }}
+          #pageInfo {{
+            min-width: 112px;
+            text-align: center;
+            color: #c7c4d8;
+            font: 600 12px/1.4 monospace;
+          }}
+          .divider {{
+            width: 1px;
+            align-self: stretch;
+            background: rgba(70,69,85,.72);
+          }}
+          .pdf-preview-loading,
+          .pdf-preview-error {{
+            margin: 16px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: rgba(18,33,49,.78);
+            color: #c7c4d8;
+          }}
+          .pdf-preview-error {{
+            border: 1px solid rgba(255,180,171,.35);
+            color: #ffb4ab;
+          }}
+          .pdf-preview-canvas-wrap {{
+            height: 660px;
+            overflow: auto;
+            display: grid;
+            place-items: start center;
+            padding: 18px;
+          }}
+          #pdfCanvas {{
+            background: white;
+            border-radius: 4px;
+            box-shadow: 0 20px 45px rgba(0,0,0,.35);
+          }}
+          @media (max-width: 720px) {{
+            .pdf-preview-shell {{ min-height: 560px; }}
+            .pdf-preview-canvas-wrap {{ height: 500px; padding: 10px; }}
+          }}
+        </style>
+        <script type="module">
+          import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+
+          const shell = document.getElementById({json.dumps(component_id)});
+          const viewer = shell.querySelector("#viewer");
+          const canvas = shell.querySelector("#pdfCanvas");
+          const context = canvas.getContext("2d");
+          const pageInfo = shell.querySelector("#pageInfo");
+          const loadingState = shell.querySelector("#loadingState");
+          const errorState = shell.querySelector("#errorState");
+          const buttons = {{
+            prev: shell.querySelector("#prevPage"),
+            next: shell.querySelector("#nextPage"),
+            zoomIn: shell.querySelector("#zoomIn"),
+            zoomOut: shell.querySelector("#zoomOut"),
+            fitWidth: shell.querySelector("#fitWidth"),
+            fitPage: shell.querySelector("#fitPage"),
+            rotate: shell.querySelector("#rotate"),
+            fullscreen: shell.querySelector("#fullscreen"),
+            download: shell.querySelector("#downloadPdf"),
+          }};
+
+          pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+          let pdfDoc = null;
+          let pageNumber = 1;
+          let scale = 1.15;
+          let rotation = 0;
+          let rendering = false;
+          const pageCache = new Map();
+          const url = {json.dumps(preview_url)};
+          const token = {json.dumps(token)};
+          const filename = {json.dumps(filename)};
+
+          function showError(message) {{
+            loadingState.hidden = true;
+            errorState.hidden = false;
+            errorState.textContent = message || "The PDF could not be loaded.";
+          }}
+
+          function cacheKey() {{
+            return `${{pageNumber}}:${{scale.toFixed(2)}}:${{rotation}}`;
+          }}
+
+          async function renderPage() {{
+            if (!pdfDoc || rendering) return;
+            rendering = true;
+            loadingState.hidden = false;
+            errorState.hidden = true;
+            buttons.prev.disabled = pageNumber <= 1;
+            buttons.next.disabled = pageNumber >= pdfDoc.numPages;
+            pageInfo.textContent = `Page ${{pageNumber}} of ${{pdfDoc.numPages}}`;
+
+            const key = cacheKey();
+            const cached = pageCache.get(key);
+            if (cached) {{
+              const image = new Image();
+              image.onload = () => {{
+                canvas.width = cached.width;
+                canvas.height = cached.height;
+                context.drawImage(image, 0, 0);
+                loadingState.hidden = true;
+                rendering = false;
+              }};
+              image.src = cached.dataUrl;
+              return;
+            }}
+
+            try {{
+              const page = await pdfDoc.getPage(pageNumber);
+              const viewport = page.getViewport({{ scale, rotation }});
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              await page.render({{ canvasContext: context, viewport }}).promise;
+              pageCache.set(key, {{
+                dataUrl: canvas.toDataURL("image/png"),
+                width: canvas.width,
+                height: canvas.height,
+              }});
+              loadingState.hidden = true;
+            }} catch (error) {{
+              showError("This page could not be rendered.");
+            }} finally {{
+              rendering = false;
+            }}
+          }}
+
+          async function loadPdf() {{
+            try {{
+              pdfDoc = await pdfjsLib.getDocument({{
+                url,
+                httpHeaders: {{ Authorization: `Bearer ${{token}}` }},
+                withCredentials: false,
+                rangeChunkSize: 65536,
+              }}).promise;
+              pageNumber = Math.min(pageNumber, pdfDoc.numPages || 1);
+              await renderPage();
+            }} catch (error) {{
+              showError("The PDF could not be loaded. Please check your access or try again.");
+            }}
+          }}
+
+          buttons.prev.addEventListener("click", () => {{
+            if (pageNumber > 1) {{
+              pageNumber -= 1;
+              renderPage();
+            }}
+          }});
+          buttons.next.addEventListener("click", () => {{
+            if (pdfDoc && pageNumber < pdfDoc.numPages) {{
+              pageNumber += 1;
+              renderPage();
+            }}
+          }});
+          buttons.zoomIn.addEventListener("click", () => {{
+            scale = Math.min(scale + .15, 3);
+            renderPage();
+          }});
+          buttons.zoomOut.addEventListener("click", () => {{
+            scale = Math.max(scale - .15, .45);
+            renderPage();
+          }});
+          buttons.fitWidth.addEventListener("click", async () => {{
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({{ scale: 1, rotation }});
+            scale = Math.max((viewer.clientWidth - 36) / viewport.width, .3);
+            renderPage();
+          }});
+          buttons.fitPage.addEventListener("click", async () => {{
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({{ scale: 1, rotation }});
+            const widthScale = Math.max((viewer.clientWidth - 36) / viewport.width, .3);
+            const heightScale = Math.max((viewer.clientHeight - 36) / viewport.height, .3);
+            scale = Math.min(widthScale, heightScale);
+            renderPage();
+          }});
+          buttons.rotate.addEventListener("click", () => {{
+            rotation = (rotation + 90) % 360;
+            renderPage();
+          }});
+          buttons.fullscreen.addEventListener("click", () => {{
+            if (shell.requestFullscreen) shell.requestFullscreen();
+          }});
+          buttons.download.addEventListener("click", async () => {{
+            try {{
+              const response = await fetch(url, {{
+                headers: {{ Authorization: `Bearer ${{token}}` }},
+              }});
+              if (!response.ok) throw new Error("download failed");
+              const blob = await response.blob();
+              const objectUrl = URL.createObjectURL(blob);
+              const anchor = document.createElement("a");
+              anchor.href = objectUrl;
+              anchor.download = filename;
+              anchor.click();
+              setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+            }} catch (error) {{
+              showError("The PDF could not be downloaded.");
+            }}
+          }});
+
+          loadPdf();
+        </script>
+        """,
+        height=820,
+        scrolling=False,
+    )
 
 
 @st.dialog("Rename Corpus")
@@ -1170,7 +1509,7 @@ def render_dashboard(corpora: list[dict[str, Any]]) -> None:
             render_corpus_card(corpus, index)
 
 
-def document_row(document: dict[str, Any]) -> None:
+def document_row(corpus_id: int, document: dict[str, Any]) -> None:
     uploaded = format_datetime(document.get("uploaded_at"), "%d %b %Y · %H:%M")
     status = str(document.get("indexing_status", "indexed"))
     st.markdown(
@@ -1190,6 +1529,13 @@ def document_row(document: dict[str, Any]) -> None:
         </div>
         """,
         unsafe_allow_html=True,
+    )
+    st.button(
+        "👁 Preview",
+        key=f"preview-document-{corpus_id}-{document['id']}",
+        use_container_width=True,
+        on_click=request_document_preview,
+        args=(corpus_id, document),
     )
 
 
@@ -1255,7 +1601,7 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
         section_title("Document inventory", f'{detail["total_documents"]} indexed')
         if detail["documents"]:
             for document in detail["documents"]:
-                document_row(document)
+                document_row(int(corpus["id"]), document)
         else:
             empty_state(
                 "Corpus is waiting for source material",
@@ -2152,6 +2498,7 @@ if st.session_state.get("renamed_corpus"):
 apply_pending_navigation(corpora)
 page = render_sidebar(corpora)
 render_flash_messages()
+render_pending_pdf_preview_dialog()
 render_pending_corpus_rename_dialog(corpora)
 render_pending_corpus_delete_dialog(corpora)
 

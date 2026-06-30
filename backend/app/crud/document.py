@@ -1,5 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from typing import Optional
 
 from app.models.corpus import Corpus
 
@@ -16,6 +17,10 @@ def list_documents(db: Session, corpus_id: int) -> list[Document]:
         .order_by(Document.uploaded_at.desc(), Document.id.desc())
     )
     return list(db.scalars(statement))
+
+
+def get_document(db: Session, document_id: int) -> Optional[Document]:
+    return db.get(Document, document_id)
 
 
 def list_user_documents_by_ids(

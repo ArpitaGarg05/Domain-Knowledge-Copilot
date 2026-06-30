@@ -468,6 +468,32 @@ p { color: var(--dk-muted); }
 }
 .dk-doc-stat span { color:var(--dk-muted); font:500 12px/1.5 "JetBrains Mono",monospace; }
 
+.dk-preview-meta {
+  margin:.2rem 0 .85rem;
+  padding:.9rem 1rem;
+  border:1px solid rgba(70,69,85,.58);
+  border-radius:12px;
+  background:rgba(13,28,45,.56);
+}
+.dk-preview-meta h3 {
+  margin:0 0 .45rem;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  font-size:18px;
+}
+.dk-preview-meta div {
+  display:flex;
+  flex-wrap:wrap;
+  gap:.45rem .75rem;
+}
+.dk-preview-meta span {
+  color:var(--dk-outline);
+  font:600 10px/1.4 "JetBrains Mono",monospace;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+
 .dk-empty {
   padding:2.4rem 1.25rem; text-align:center;
   border:1px dashed rgba(145,143,161,.58); border-radius:12px;
