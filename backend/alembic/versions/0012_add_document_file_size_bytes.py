@@ -17,15 +17,22 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "documents",
-        sa.Column(
-            "file_size_bytes",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-        ),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    document_columns = {
+        column["name"]
+        for column in inspector.get_columns("documents")
+    }
+    if "file_size_bytes" not in document_columns:
+        op.add_column(
+            "documents",
+            sa.Column(
+                "file_size_bytes",
+                sa.Integer(),
+                nullable=False,
+                server_default="0",
+            ),
+        )
 
 
 def downgrade() -> None:
