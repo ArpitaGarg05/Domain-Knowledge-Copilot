@@ -2,10 +2,10 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "if [ -d backend ]; then cd backend; fi && pip install -r requirements.txt"
+    "buildCommand": "if [ -f app.py ] && [ ! -d backend ]; then pip install -r requirements.txt; else if [ -d backend ]; then cd backend; fi && pip install -r requirements.txt; fi"
   },
   "deploy": {
-    "startCommand": "if [ -d backend ]; then cd backend; fi && python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "if [ -f app.py ] && [ ! -d backend ]; then streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true; else if [ -d backend ]; then cd backend; fi && python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT; fi",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
