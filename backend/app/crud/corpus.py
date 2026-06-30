@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.corpus import Corpus
@@ -16,6 +16,22 @@ def get_user_corpus(db: Session, corpus_id: int, owner_id: int) -> Optional[Corp
         Corpus.id == corpus_id,
         Corpus.owner_id == owner_id,
     )
+    return db.scalar(statement)
+
+
+def get_user_corpus_by_name(
+    db: Session,
+    *,
+    owner_id: int,
+    name: str,
+    exclude_corpus_id: Optional[int] = None,
+) -> Optional[Corpus]:
+    statement = select(Corpus).where(
+        Corpus.owner_id == owner_id,
+        func.lower(Corpus.name) == name.lower(),
+    )
+    if exclude_corpus_id is not None:
+        statement = statement.where(Corpus.id != exclude_corpus_id)
     return db.scalar(statement)
 
 
@@ -41,6 +57,14 @@ def create_corpus(db: Session, request: CorpusCreateRequest, owner_id: int) -> C
         description=request.description,
         owner_id=owner_id,
     )
+    db.add(corpus)
+    db.commit()
+    db.refresh(corpus)
+    return corpus
+
+
+def rename_corpus(db: Session, corpus: Corpus, name: str) -> Corpus:
+    corpus.name = name
     db.add(corpus)
     db.commit()
     db.refresh(corpus)

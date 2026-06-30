@@ -20,6 +20,7 @@ from styles import (
     section_title,
     status_badge,
 )
+from state_utils import replace_corpus_in_list
 
 
 st.set_page_config(
@@ -32,6 +33,8 @@ inject_styles()
 
 API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 DEFAULT_STORAGE_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+CORPUS_NAME_MIN_LENGTH = 3
+CORPUS_NAME_MAX_LENGTH = 100
 
 
 def parse_storage_limit() -> int:
@@ -181,8 +184,29 @@ def create_corpus(name: str, description: str) -> dict[str, Any]:
     )
 
 
+def rename_corpus(corpus_id: int, name: str) -> dict[str, Any]:
+    return request_json(
+        "PATCH",
+        f"/api/corpora/{corpus_id}",
+        json={"name": name},
+    )
+
+
 def is_valid_corpus_name(name: str) -> bool:
-    return bool(re.search(r"[A-Za-z]", name.strip()))
+    return validate_corpus_name(name) is None
+
+
+def validate_corpus_name(name: str) -> Optional[str]:
+    normalized = name.strip()
+    if not normalized:
+        return "Corpus name is required."
+    if len(normalized) < CORPUS_NAME_MIN_LENGTH:
+        return f"Corpus name must be at least {CORPUS_NAME_MIN_LENGTH} characters."
+    if len(normalized) > CORPUS_NAME_MAX_LENGTH:
+        return f"Corpus name must be at most {CORPUS_NAME_MAX_LENGTH} characters."
+    if not re.search(r"[A-Za-z]", normalized):
+        return "Corpus name must contain at least one letter."
+    return None
 
 
 def delete_corpus(corpus_id: int) -> dict[str, Any]:
@@ -391,6 +415,20 @@ def request_corpus_delete(corpus_id: int) -> None:
     st.session_state.pending_delete_corpus_id = corpus_id
 
 
+def request_corpus_rename(corpus_id: int) -> None:
+    st.session_state.pending_rename_corpus_id = corpus_id
+    st.session_state.pop(f"rename-corpus-name-{corpus_id}", None)
+
+
+def complete_corpus_rename(corpus_id: int, name: str) -> None:
+    updated = rename_corpus(corpus_id, name.strip())
+    st.session_state.pop("pending_rename_corpus_id", None)
+    st.session_state.renamed_corpus = updated
+    st.session_state.corpus_rename_success = "Corpus renamed successfully."
+    if str(st.session_state.get("selected_corpus_id")) == str(corpus_id):
+        st.session_state.selected_corpus_id = updated["id"]
+
+
 def complete_corpus_delete(corpus_id: int) -> None:
     response = delete_corpus(corpus_id)
     if str(st.session_state.get("selected_corpus_id")) == str(corpus_id):
@@ -404,6 +442,52 @@ def complete_corpus_delete(corpus_id: int) -> None:
         "Corpus permanently deleted.",
     )
     queue_navigation("Corpus Dashboard")
+
+
+@st.dialog("Rename Corpus")
+def render_corpus_rename_dialog(corpus: dict[str, Any]) -> None:
+    corpus_id = int(corpus["id"])
+    original_name = str(corpus["name"])
+    input_key = f"rename-corpus-name-{corpus_id}"
+    st.caption("Current corpus name")
+    st.markdown(f"**{escape(original_name)}**")
+    proposed_name = st.text_input(
+        "Corpus name",
+        value=original_name,
+        key=input_key,
+        max_chars=CORPUS_NAME_MAX_LENGTH,
+    )
+    normalized_original = original_name.strip()
+    normalized_proposed = proposed_name.strip()
+    validation_error = validate_corpus_name(proposed_name)
+    modified = normalized_proposed != normalized_original
+    if validation_error:
+        st.error(validation_error)
+
+    enhance_corpus_rename_dialog()
+    save, cancel = st.columns(2)
+    with save:
+        if st.button(
+            "Save",
+            type="primary",
+            disabled=bool(validation_error) or not modified,
+            use_container_width=True,
+            key=f"rename-dialog-save-{corpus_id}",
+        ):
+            try:
+                with st.spinner("Renaming corpus..."):
+                    complete_corpus_rename(corpus_id, proposed_name)
+                st.rerun()
+            except requests.RequestException as error:
+                render_api_error(error)
+    with cancel:
+        if st.button(
+            "Cancel",
+            use_container_width=True,
+            key=f"rename-dialog-cancel-{corpus_id}",
+        ):
+            st.session_state.pop("pending_rename_corpus_id", None)
+            st.rerun()
 
 
 @st.dialog("Delete Corpus")
@@ -460,7 +544,55 @@ def render_pending_corpus_delete_dialog(corpora: list[dict[str, Any]]) -> None:
     render_corpus_delete_dialog(corpus)
 
 
+def render_pending_corpus_rename_dialog(corpora: list[dict[str, Any]]) -> None:
+    pending_id = st.session_state.get("pending_rename_corpus_id")
+    if pending_id is None:
+        return
+    corpus = next(
+        (item for item in corpora if str(item["id"]) == str(pending_id)),
+        None,
+    )
+    if corpus is None:
+        st.session_state.pop("pending_rename_corpus_id", None)
+        return
+    render_corpus_rename_dialog(corpus)
+
+
+def enhance_corpus_rename_dialog() -> None:
+    components.html(
+        """
+        <script>
+          setTimeout(() => {
+            const doc = window.parent.document;
+            const inputs = Array.from(doc.querySelectorAll('input[aria-label="Corpus name"]'));
+            const input = inputs[inputs.length - 1];
+            if (!input) return;
+            input.focus();
+            input.select();
+            input.addEventListener("keydown", (event) => {
+              const buttons = Array.from(doc.querySelectorAll("button"));
+              if (event.key === "Escape") {
+                const cancel = buttons.reverse().find((button) => button.innerText.trim() === "Cancel");
+                if (cancel) cancel.click();
+              }
+              if (event.key === "Enter") {
+                const save = buttons.reverse().find((button) => button.innerText.trim() === "Save" && !button.disabled);
+                if (save) save.click();
+              }
+            }, { once: true });
+          }, 120);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def render_flash_messages() -> None:
+    rename_success = st.session_state.pop("corpus_rename_success", None)
+    if rename_success:
+        st.toast(rename_success, icon="✅")
+        st.session_state.pop("renamed_corpus", None)
     success = st.session_state.pop("corpus_delete_success", None)
     if success:
         st.success(success)
@@ -557,6 +689,8 @@ def humanize_api_error(detail: Any) -> str:
         return "Incorrect email or password."
     if "valid email" in normalized or "email address" in normalized:
         return "Please enter a valid email address."
+    if "corpus with this name already exists" in normalized:
+        return "A corpus with this name already exists."
     if "user with this email already exists" in normalized or "already exists" in normalized:
         return "An account with this email already exists."
     if "field required" in normalized:
@@ -910,13 +1044,21 @@ def render_corpus_card(corpus: dict[str, Any], index: int) -> None:
                 args=("Corpus Detail", int(corpus["id"])),
             )
         with delete_action:
-            st.button(
-                "🗑️ Delete",
-                key=f"delete-corpus-card-{corpus['id']}-{index}",
-                use_container_width=True,
-                on_click=request_corpus_delete,
-                args=(int(corpus["id"]),),
-            )
+            with st.popover("⋮", use_container_width=True):
+                st.button(
+                    "Rename",
+                    key=f"rename-corpus-card-{corpus['id']}-{index}",
+                    use_container_width=True,
+                    on_click=request_corpus_rename,
+                    args=(int(corpus["id"]),),
+                )
+                st.button(
+                    "🗑️ Delete",
+                    key=f"delete-corpus-card-{corpus['id']}-{index}",
+                    use_container_width=True,
+                    on_click=request_corpus_delete,
+                    args=(int(corpus["id"]),),
+                )
 
 
 def render_create_corpus(form_key: str) -> None:
@@ -943,9 +1085,10 @@ def render_create_corpus(form_key: str) -> None:
             key=description_key,
         )
         name_has_value = bool(name.strip())
-        name_is_valid = is_valid_corpus_name(name)
-        if name_has_value and not name_is_valid:
-            st.warning("Corpus name must contain at least one letter.")
+        name_error = validate_corpus_name(name) if name_has_value else None
+        name_is_valid = name_error is None
+        if name_error:
+            st.warning(name_error)
         if st.button(
             "Create Corpus",
             type="primary",
@@ -1089,13 +1232,23 @@ def render_corpus_detail(corpora: list[dict[str, Any]]) -> None:
         storage_usage_metric(total_storage_bytes),
     ]
     metric_grid(metrics)
-    st.button(
-        "🗑️ Delete Corpus",
-        key=f"delete-corpus-detail-{corpus['id']}",
-        use_container_width=False,
-        on_click=request_corpus_delete,
-        args=(int(corpus["id"]),),
-    )
+    rename_action, delete_action = st.columns([0.18, 0.18])
+    with rename_action:
+        st.button(
+            "Rename Corpus",
+            key=f"rename-corpus-detail-{corpus['id']}",
+            use_container_width=True,
+            on_click=request_corpus_rename,
+            args=(int(corpus["id"]),),
+        )
+    with delete_action:
+        st.button(
+            "🗑️ Delete Corpus",
+            key=f"delete-corpus-detail-{corpus['id']}",
+            use_container_width=True,
+            on_click=request_corpus_delete,
+            args=(int(corpus["id"]),),
+        )
 
     inventory, action = st.columns([1.45, 1], gap="large")
     with inventory:
@@ -1993,9 +2146,13 @@ except requests.RequestException as error:
     render_api_error(error)
     st.stop()
 
+if st.session_state.get("renamed_corpus"):
+    corpora = replace_corpus_in_list(corpora, st.session_state["renamed_corpus"])
+
 apply_pending_navigation(corpora)
 page = render_sidebar(corpora)
 render_flash_messages()
+render_pending_corpus_rename_dialog(corpora)
 render_pending_corpus_delete_dialog(corpora)
 
 if page == "Corpus Dashboard":

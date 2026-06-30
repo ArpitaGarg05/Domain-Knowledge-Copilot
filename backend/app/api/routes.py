@@ -28,6 +28,8 @@ from app.schemas.corpus import (
     CorpusCreateRequest,
     CorpusDeleteResponse,
     CorpusResponse,
+    CorpusUpdateRequest,
+    normalize_corpus_name,
 )
 from app.schemas.comparison import (
     ComparedDocumentResponse,
@@ -180,8 +182,63 @@ def create_corpus(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CorpusResponse:
+    existing_corpus = corpus_crud.get_user_corpus_by_name(
+        db,
+        owner_id=current_user.id,
+        name=request.name,
+    )
+    if existing_corpus is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A corpus with this name already exists.",
+        )
+
     corpus = corpus_crud.create_corpus(db, request, owner_id=current_user.id)
     return build_corpus_response(corpus)
+
+
+@router.patch("/api/corpora/{corpus_id}", response_model=CorpusResponse)
+@router.patch("/corpora/{corpus_id}", response_model=CorpusResponse)
+def rename_corpus(
+    corpus_id: int,
+    request: CorpusUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CorpusResponse:
+    corpus = corpus_crud.get_corpus(db, corpus_id)
+    if corpus is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Corpus not found.",
+        )
+    if corpus.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to rename this corpus.",
+        )
+
+    try:
+        new_name = normalize_corpus_name(request.name)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+    duplicate = corpus_crud.get_user_corpus_by_name(
+        db,
+        owner_id=current_user.id,
+        name=new_name,
+        exclude_corpus_id=corpus_id,
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A corpus with this name already exists.",
+        )
+
+    updated = corpus_crud.rename_corpus(db, corpus, new_name)
+    return build_corpus_response(updated)
 
 
 @router.delete("/api/corpora/{corpus_id}", response_model=CorpusDeleteResponse)
