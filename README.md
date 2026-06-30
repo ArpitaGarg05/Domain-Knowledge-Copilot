@@ -381,6 +381,12 @@ pip install -r backend/requirements.txt
 pip install -r frontend/requirements.txt
 ```
 
+Sentence Transformers embeddings are optional. To enable them, install the ML extras and set `EMBEDDING_BACKEND=sentence-transformers`:
+
+```bash
+pip install -r backend/requirements-ml.txt
+```
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

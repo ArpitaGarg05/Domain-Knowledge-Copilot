@@ -7,7 +7,6 @@ python-multipart
 pypdf
 chromadb
 groq
-sentence-transformers==5.1.0
 psycopg[binary]
 gunicorn
 pytest
