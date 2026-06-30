@@ -1,10 +1,57 @@
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, literal, select
 from sqlalchemy.orm import Session
 
 from app.models.corpus import Corpus
+from app.models.document import Document
 from app.schemas.corpus import CorpusCreateRequest
+
+
+def get_corpus_metrics(
+    db: Session,
+    corpus_ids: list[int],
+) -> dict[int, tuple[int, int]]:
+    if not corpus_ids:
+        return {}
+
+    unique_ids = list(dict.fromkeys(corpus_ids))
+    inspector = inspect(db.get_bind())
+    if Document.__tablename__ not in set(inspector.get_table_names()):
+        return {corpus_id: (0, 0) for corpus_id in unique_ids}
+
+    document_columns = {
+        column["name"]
+        for column in inspector.get_columns(Document.__tablename__)
+    }
+    has_file_size_column = "file_size_bytes" in document_columns
+
+    storage_expression = (
+        func.coalesce(func.sum(Document.file_size_bytes), 0)
+        if has_file_size_column
+        else literal(0)
+    )
+    statement = (
+        select(
+            Document.corpus_id,
+            func.count(Document.id),
+            storage_expression,
+        )
+        .where(Document.corpus_id.in_(unique_ids))
+        .group_by(Document.corpus_id)
+    )
+
+    metrics = {
+        corpus_id: (0, 0)
+        for corpus_id in unique_ids
+    }
+    for corpus_id, document_count, total_storage_bytes in db.execute(statement):
+        metrics[int(corpus_id)] = (
+            int(document_count or 0),
+            int(total_storage_bytes or 0),
+        )
+
+    return metrics
 
 
 def get_corpus(db: Session, corpus_id: int) -> Optional[Corpus]:

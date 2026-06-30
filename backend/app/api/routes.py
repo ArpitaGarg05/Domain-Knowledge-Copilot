@@ -142,16 +142,17 @@ def update_profile(
     return UserResponse.model_validate(user)
 
 
-def build_corpus_response(corpus: Corpus) -> CorpusResponse:
+def build_corpus_response(
+    corpus: Corpus,
+    metrics: Optional[tuple[int, int]] = None,
+) -> CorpusResponse:
+    document_count, total_storage_bytes = metrics or (0, 0)
     return CorpusResponse(
         id=corpus.id,
         name=corpus.name,
         description=corpus.description,
-        document_count=len(corpus.documents),
-        total_storage_bytes=sum(
-            get_document_file_size_bytes(document)
-            for document in corpus.documents
-        ),
+        document_count=document_count,
+        total_storage_bytes=total_storage_bytes,
         updated_at=corpus.updated_at,
     )
 
@@ -176,7 +177,17 @@ def list_corpora(
     current_user: User = Depends(get_current_user),
 ) -> list[CorpusResponse]:
     corpora = corpus_crud.list_corpora(db, owner_id=current_user.id)
-    return [build_corpus_response(corpus) for corpus in corpora]
+    corpus_metrics = corpus_crud.get_corpus_metrics(
+        db,
+        [corpus.id for corpus in corpora],
+    )
+    return [
+        build_corpus_response(
+            corpus,
+            metrics=corpus_metrics.get(corpus.id, (0, 0)),
+        )
+        for corpus in corpora
+    ]
 
 
 @router.post(
@@ -201,7 +212,7 @@ def create_corpus(
         )
 
     corpus = corpus_crud.create_corpus(db, request, owner_id=current_user.id)
-    return build_corpus_response(corpus)
+    return build_corpus_response(corpus, metrics=(0, 0))
 
 
 @router.patch("/api/corpora/{corpus_id}", response_model=CorpusResponse)
@@ -245,7 +256,8 @@ def rename_corpus(
         )
 
     updated = corpus_crud.rename_corpus(db, corpus, new_name)
-    return build_corpus_response(updated)
+    metrics = corpus_crud.get_corpus_metrics(db, [updated.id]).get(updated.id, (0, 0))
+    return build_corpus_response(updated, metrics=metrics)
 
 
 @router.delete("/api/corpora/{corpus_id}", response_model=CorpusDeleteResponse)
