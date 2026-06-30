@@ -13,9 +13,6 @@ from app.models import chat_message, comparison, corpus, document, user
 
 logger = logging.getLogger(__name__)
 
-COMPARISON_QUESTIONS_REVISION = "0010_add_comparison_questions"
-
-
 def run_migrations() -> None:
     backend_dir = Path(__file__).resolve().parents[2]
     alembic_ini = backend_dir / "alembic.ini"
@@ -33,13 +30,6 @@ def run_migrations() -> None:
         Base.metadata.create_all(bind=engine)
         command.stamp(config, "head")
         logger.info("Fresh database schema created and stamped at Alembic head.")
-        return
-
-    current_revision = get_current_revision()
-    if current_revision == COMPARISON_QUESTIONS_REVISION:
-        logger.info(
-            "Skipping no-op comparison evidence migration at startup.",
-        )
         return
 
     logger.info("Running Alembic migrations.")
