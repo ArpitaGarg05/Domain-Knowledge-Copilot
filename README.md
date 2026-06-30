@@ -75,6 +75,300 @@ The backend follows a layered structure:
 
 The frontend is a single Streamlit application with page-level render functions for dashboard, corpus detail, corpus chat, comparison, history, and settings.
 
+## Project Diagrams
+
+The following diagrams summarize the product workflow, system architecture, AI pipelines, and database design. They are written in Mermaid so they render directly on GitHub.
+
+### User Workflow Diagram
+
+```mermaid
+flowchart TD
+    Start([User opens web application])
+    AuthChoice{"Has an account?"}
+    Register["Sign Up"]
+    Login["Login"]
+    Dashboard["Open Dashboard"]
+    CorpusChoice{"Create or select workspace?"}
+    CreateCorpus["Create New Corpus"]
+    SelectCorpus["Select Existing Corpus"]
+    Upload["Upload one or more PDF documents"]
+    Extract["Backend extracts PDF text"]
+    Chunk["Split text into semantic chunks"]
+    Embed["Generate embeddings"]
+    Store["Store chunks in Vector Database"]
+    Ask["Ask a question"]
+    Retrieve["Retrieve relevant chunks with semantic search"]
+    LLM["LLM generates grounded answer"]
+    Answer["Display answer with source references"]
+    Continue{"Ask another question?"}
+    CompareChoice{"Compare PDFs?"}
+    CompareUpload["Select two or more uploaded PDFs"]
+    CompareAI["AI compares documents section by section"]
+    CompareResult["Display similarities, differences, and summary"]
+    End([Session complete])
+
+    Start --> AuthChoice
+    AuthChoice -->|"No"| Register --> Dashboard
+    AuthChoice -->|"Yes"| Login --> Dashboard
+    Dashboard --> CorpusChoice
+    CorpusChoice -->|"Create"| CreateCorpus --> Upload
+    CorpusChoice -->|"Select"| SelectCorpus --> Upload
+    Upload --> Extract --> Chunk --> Embed --> Store
+    Store --> Ask --> Retrieve --> LLM --> Answer
+    Answer --> Continue
+    Continue -->|"Yes"| Ask
+    Continue -->|"No"| CompareChoice
+    CompareChoice -->|"Yes"| CompareUpload --> CompareAI --> CompareResult --> End
+    CompareChoice -->|"No"| End
+
+    classDef startEnd fill:#dbeafe,stroke:#2563eb,color:#0f172a,stroke-width:2px;
+    classDef process fill:#eff6ff,stroke:#3b82f6,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef decision fill:#f0f9ff,stroke:#0284c7,color:#0f172a,stroke-width:1.5px;
+    classDef ai fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+
+    class Start,End startEnd;
+    class AuthChoice,CorpusChoice,Continue,CompareChoice decision;
+    class LLM,CompareAI ai;
+    class Register,Login,Dashboard,CreateCorpus,SelectCorpus,Upload,Extract,Chunk,Embed,Store,Ask,Retrieve,Answer,CompareUpload,CompareResult process;
+```
+
+### System Architecture Diagram
+
+```mermaid
+flowchart TB
+    User["User"]
+
+    subgraph Frontend["Frontend Layer"]
+        UI["Streamlit Web App"]
+        AuthUI["Authentication UI"]
+        Dash["Dashboard"]
+        CorpusUI["Corpus Management"]
+        ChatUI["Chat Interface"]
+        UploadUI["PDF Upload"]
+        CompareUI["PDF Comparison Interface"]
+    end
+
+    subgraph API["REST API Layer"]
+        FastAPI["FastAPI"]
+    end
+
+    subgraph Backend["Backend Service Layer"]
+        AuthSvc["Authentication Service"]
+        CorpusSvc["Corpus Management Service"]
+        DocSvc["Document Processing Service"]
+        EmbedSvc["Embedding Generator"]
+        VectorSvc["Vector Search Engine"]
+        ChatSvc["AI Chat Engine"]
+        CompareSvc["PDF Comparison Engine"]
+    end
+
+    subgraph AI["AI Layer"]
+        EmbeddingModel["Embedding Model"]
+        LLM["Large Language Model"]
+        RAG["Retrieval-Augmented Generation"]
+    end
+
+    subgraph Data["Data Layer"]
+        Postgres["PostgreSQL<br/>Users, Corpora, Metadata"]
+        VectorDB["Vector Database<br/>Embeddings"]
+        Storage["File Storage<br/>Uploaded PDFs"]
+    end
+
+    User --> UI
+    UI --> AuthUI
+    UI --> Dash
+    UI --> CorpusUI
+    UI --> ChatUI
+    UI --> UploadUI
+    UI --> CompareUI
+
+    Frontend -->|"REST API"| FastAPI
+    FastAPI --> AuthSvc
+    FastAPI --> CorpusSvc
+    FastAPI --> DocSvc
+    FastAPI --> EmbedSvc
+    FastAPI --> VectorSvc
+    FastAPI --> ChatSvc
+    FastAPI --> CompareSvc
+
+    DocSvc --> Storage
+    DocSvc --> EmbedSvc
+    EmbedSvc --> EmbeddingModel
+    EmbedSvc --> VectorDB
+    VectorSvc --> VectorDB
+    ChatSvc --> RAG
+    CompareSvc --> RAG
+    RAG --> EmbeddingModel
+    RAG --> LLM
+    AuthSvc --> Postgres
+    CorpusSvc --> Postgres
+    DocSvc --> Postgres
+    CompareSvc --> Postgres
+
+    LLM --> FastAPI
+    FastAPI --> UI
+    UI --> User
+
+    classDef frontend fill:#dbeafe,stroke:#2563eb,color:#0f172a,stroke-width:1.5px;
+    classDef api fill:#e0f2fe,stroke:#0284c7,color:#0f172a,stroke-width:1.5px;
+    classDef backend fill:#ecfeff,stroke:#0891b2,color:#0f172a,stroke-width:1.5px;
+    classDef ai fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1.5px;
+    classDef data fill:#eef2ff,stroke:#4f46e5,color:#0f172a,stroke-width:1.5px;
+
+    class UI,AuthUI,Dash,CorpusUI,ChatUI,UploadUI,CompareUI frontend;
+    class FastAPI api;
+    class AuthSvc,CorpusSvc,DocSvc,EmbedSvc,VectorSvc,ChatSvc,CompareSvc backend;
+    class EmbeddingModel,LLM,RAG ai;
+    class Postgres,VectorDB,Storage data;
+```
+
+### AI-Powered PDF Comparison Workflow
+
+```mermaid
+flowchart TD
+    Upload["User selects PDF A and PDF B"]
+    Validate["Validate PDF files"]
+    ExtractA["Extract text from PDF A"]
+    ExtractB["Extract text from PDF B"]
+    ChunkA["Split PDF A into semantic chunks"]
+    ChunkB["Split PDF B into semantic chunks"]
+    Embed["Generate embeddings for both documents"]
+    Align["Align corresponding sections using semantic similarity"]
+    Compare["AI compares content section by section"]
+    Identify["Identify matching, missing, modified, additional, and different information"]
+    Reports["Generate similarity report, difference report, and AI summary"]
+    Display["Display interactive comparison results"]
+
+    Upload --> Validate
+    Validate --> ExtractA
+    Validate --> ExtractB
+    ExtractA --> ChunkA
+    ExtractB --> ChunkB
+    ChunkA --> Embed
+    ChunkB --> Embed
+    Embed --> Align --> Compare --> Identify --> Reports --> Display
+
+    classDef input fill:#dbeafe,stroke:#2563eb,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef process fill:#eff6ff,stroke:#3b82f6,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef ai fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef output fill:#ede9fe,stroke:#6d28d9,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+
+    class Upload input;
+    class Validate,ExtractA,ExtractB,ChunkA,ChunkB,Embed,Align process;
+    class Compare,Identify ai;
+    class Reports,Display output;
+```
+
+### Retrieval-Augmented Generation Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Indexing["Indexing Pipeline"]
+        PDF["PDF Documents"]
+        Extract["Text Extraction"]
+        Chunk["Text Chunking"]
+        EmbedDocs["Embedding Generation"]
+        VectorDB["Vector Database"]
+    end
+
+    subgraph Query["Question Answering Pipeline"]
+        UserQuery["User Query"]
+        QueryEmbed["Query Embedding"]
+        Search["Similarity Search"]
+        TopChunks["Top Relevant Chunks"]
+        Context["Context + User Question"]
+        LLM["Large Language Model"]
+        Final["Final Answer with References"]
+    end
+
+    PDF --> Extract --> Chunk --> EmbedDocs --> VectorDB
+    UserQuery --> QueryEmbed --> Search
+    VectorDB --> Search
+    Search --> TopChunks --> Context --> LLM --> Final
+
+    classDef index fill:#dbeafe,stroke:#2563eb,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef query fill:#ecfeff,stroke:#0891b2,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef ai fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+    classDef result fill:#ede9fe,stroke:#6d28d9,color:#0f172a,stroke-width:1.5px,rx:12,ry:12;
+
+    class PDF,Extract,Chunk,EmbedDocs,VectorDB index;
+    class UserQuery,QueryEmbed,Search,TopChunks,Context query;
+    class LLM ai;
+    class Final result;
+```
+
+### Database ER Diagram
+
+```mermaid
+erDiagram
+    USER ||--o{ CORPUS : creates
+    CORPUS ||--o{ DOCUMENT : contains
+    USER ||--o{ CHAT_SESSION : owns
+    CORPUS ||--o{ CHAT_SESSION : scopes
+    CHAT_SESSION ||--o{ CHAT_MESSAGE : contains
+    USER ||--o{ PDF_COMPARISON : performs
+    PDF_COMPARISON ||--|| COMPARISON_RESULT : produces
+    DOCUMENT ||--o{ PDF_COMPARISON_DOCUMENT : selected_for
+    PDF_COMPARISON ||--o{ PDF_COMPARISON_DOCUMENT : includes
+
+    USER {
+        int user_id PK
+        string name
+        string email
+        string password_hash
+    }
+
+    CORPUS {
+        int corpus_id PK
+        string name
+        string description
+        int created_by FK
+        datetime created_at
+    }
+
+    DOCUMENT {
+        int document_id PK
+        int corpus_id FK
+        string filename
+        datetime upload_date
+        string status
+    }
+
+    CHAT_SESSION {
+        string session_id PK
+        int user_id FK
+        int corpus_id FK
+        datetime created_at
+    }
+
+    CHAT_MESSAGE {
+        int message_id PK
+        string session_id FK
+        string role
+        text content
+        datetime timestamp
+    }
+
+    PDF_COMPARISON {
+        int comparison_id PK
+        int user_id FK
+        datetime created_at
+    }
+
+    PDF_COMPARISON_DOCUMENT {
+        int comparison_id FK
+        int document_id FK
+    }
+
+    COMPARISON_RESULT {
+        int result_id PK
+        int comparison_id FK
+        text summary
+        text similarities
+        text differences
+    }
+```
+
 ## Installation
 
 ```bash
