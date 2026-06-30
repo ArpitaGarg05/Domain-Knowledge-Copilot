@@ -1,22 +1,36 @@
-import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
+from app.core.config import settings
 from app.db.base import Base
 from app.models import chat_message, comparison, corpus, document, user
 
 config = context.config
 
-database_url = os.getenv("DATABASE_URL")
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+
+def ensure_wide_alembic_version_column(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+
+    connection.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(255) NOT NULL)",
+        ),
+    )
+    connection.execute(
+        text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"),
+    )
+    connection.commit()
 
 
 def run_migrations_offline() -> None:
@@ -40,6 +54,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        ensure_wide_alembic_version_column(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():

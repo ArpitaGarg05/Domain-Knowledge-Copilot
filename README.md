@@ -391,7 +391,7 @@ pip install -r backend/requirements-ml.txt
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | No | `sqlite:///./domain_knowledge_copilot.db` | SQLAlchemy database URL. Use PostgreSQL in production. |
+| `DATABASE_URL` | No | Neon PostgreSQL URL | SQLAlchemy database URL. Railway should set this as an environment variable. |
 | `GROQ_API_KEY` | Yes for LLM answers | None | API key for Groq completion requests. |
 | `JWT_SECRET_KEY` | Yes in production | `development-only-change-me` | Secret used to sign tokens. |
 | `EMBEDDING_BACKEND` | No | `hash` | Use `hash` or `sentence-transformers`. |
